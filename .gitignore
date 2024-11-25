@@ -8,6 +8,9 @@
 *.so
 *.dylib
 bin/
+*.deb
+*.sum
+*.uf2
 
 # Test binary, built with `go test -c`
 *.test
