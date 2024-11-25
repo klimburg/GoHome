@@ -1,0 +1,5 @@
+---
+- labels:
+    job: node01
+  targets:
+    - 'kevin-NUC12WSHi7:9100'

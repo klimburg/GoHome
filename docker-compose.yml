@@ -1,0 +1,72 @@
+services:
+  prometheus:
+    image: quay.io/prometheus/prometheus:v2.45.0
+    restart: always
+    volumes:
+    - "prom_data:/prometheus"
+    - "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+    - "./prometheus/sd_node01.yml:/prometheus/sd_node01.yml:ro"
+    - "./prometheus/sd_picotempexporter.yml:/prometheus/sd_picotempexporter.yml:ro"
+    ports:
+    - 9090:9090
+    networks:
+    - prom_net
+    extra_hosts:
+    - "kevin-NUC12WSHi7:192.168.50.190"
+  node:
+    image: quay.io/prometheus/node-exporter:v1.6.1
+    command:
+    - "--path.rootfs=/host"
+    pid: host
+    restart: always
+    volumes:
+    - "/:/host:ro,rslave"
+    expose:
+    - 9100
+    network_mode: host
+  grafana:
+    image: docker.io/grafana/grafana-oss:9.5.6
+    restart: always
+    networks:
+      - prom_net
+    ports:
+    - 3100:3000
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      # - /etc/timezone:/etc/timezone:ro
+      # - .config/entrypoint.sh:/app/entrypoint.sh
+      - ./grafana/config/grafana.ini:/etc/grafana/grafana.ini
+      - ./grafana/config/dashboards:/var/lib/grafana/dashboards
+      - ./grafana/config/datasources:/etc/grafana/datasources
+      - ./grafana/config/plugins:/var/lib/grafana/plugins
+    environment:
+      - TZ=America/Los Angeles
+  picotempexport:
+    build: 
+      context: tempmonitor/exporter/
+    restart: always
+    environment:
+      - PICO_SERVER_URL=http://192.168.50.129
+    networks:
+      - prom_net  
+    ports:
+    - 3030:3030
+  rest_api:
+    build: 
+      context: restapi/
+    restart: always
+    ports: 
+    - 4000:4000
+
+
+volumes:
+  prom_data: {}
+  grafana-storage: {}
+
+networks:
+  prom_net:
+    driver: bridge
+    # ipam:
+    #   config:
+    #   - subnet: 192.168.50.0/24
+    #     gateway: 192.168.50.1
