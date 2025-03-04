@@ -1,8 +1,11 @@
+import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, Optional, Set, TypedDict, Union
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 from sift_py.ingestion.channel import ChannelDataType
 
 # Define the type for channel conversion functions
@@ -48,13 +51,59 @@ class BluetoothSensor(ABC):
         self.name = name or f"{self.__class__.__name__}-{self.serial_number}"
 
     @abstractmethod
-    async def discover(self) -> Optional[str]:
+    def _detection_callback(
+        self,
+        device: BLEDevice,
+        advertisement_data: AdvertisementData,
+        found_devices: Set[str],
+    ) -> None:
+        """Callback for BLE device detection.
+
+        Args:
+            device: The discovered BLE device
+            advertisement_data: Advertisement data from the device
+            found_devices: Set to add device addresses to when found
+        """
+        pass
+
+    async def discover(self, scan_time: float = 10.0) -> Optional[str]:
         """Discover the device by scanning for its serial number.
+
+        Args:
+            scan_time: Time in seconds to scan for devices
 
         Returns:
             The device address if found, None otherwise
         """
-        pass
+        self.logger.debug(
+            f"Scanning for device with serial number {self.serial_number}..."
+        )
+
+        found_devices: Set[str] = set()
+
+        def callback_wrapper(
+            device: BLEDevice, advertisement_data: AdvertisementData
+        ) -> None:
+            self._detection_callback(device, advertisement_data, found_devices)
+
+        scanner = BleakScanner(detection_callback=callback_wrapper)
+
+        try:
+            await scanner.start()
+            await asyncio.sleep(scan_time)
+            await scanner.stop()
+
+            if found_devices:
+                device_address = next(iter(found_devices))
+                self.logger.debug(f"Found device: {device_address}")
+                return device_address
+            else:
+                self.logger.debug("Device not found")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error during device discovery: {e}")
+            return None
 
     async def connect(self, retries: int = 1) -> bool:
         """Connect to the device.

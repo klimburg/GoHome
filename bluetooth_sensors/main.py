@@ -137,6 +137,10 @@ def build_telemetry_config(
                     unit=unit,
                 )
             )
+        for channel_config in channels:
+            logger.debug(
+                f"Channel Config: {channel_config.name}, {channel_config.data_type}, {channel_config.unit}"
+            )
 
         # Create a unique flow name and store it in the mapping
         flow_name = f"{sensor_name}-readings-{int(time.time())}"
@@ -265,19 +269,30 @@ async def main() -> None:
                         for channel_config in flow_config.channels:
                             channel_name = channel_config.name
                             value = data.get(channel_name)
+                            logger.debug(
+                                f"Ingesting data for {sensor_name}: channel_name: {channel_name}, value: {value}, type: {type(value)}"
+                            )
                             if value is None:
                                 logger.warning(f"No value for channel {channel_name}")
                                 continue
 
+                            if channel_name == "Playroom.error":
+                                logger.debug(
+                                    f"Error value: {value}, type: {type(value)}, channel_type: {channel_config.data_type}, is_bool: {isinstance(value, bool)}"
+                                )
+
                             channel_values.append(
                                 ChannelValue(
                                     channel_name=channel_name,
-                                    value=channel_config.value_from(value),
+                                    value=channel_config.try_value_from(value),
                                 )
                             )
 
                         # Ingest data
                         if channel_values:
+                            logger.debug(
+                                f"Ingesting data for {sensor_name}: channel_values: {channel_values}"
+                            )
                             ingestion_service.try_ingest_flows(
                                 Flow(
                                     flow_name=flow_config.name,

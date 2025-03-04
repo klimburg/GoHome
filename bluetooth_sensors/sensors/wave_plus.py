@@ -4,9 +4,8 @@ import logging
 import signal
 import struct
 import time
-from typing import Callable, Dict, List, Optional, Union, cast
+from typing import Callable, Dict, List, Optional, Set, Union, cast
 
-from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from sift_py.ingestion.channel import ChannelDataType
@@ -138,43 +137,24 @@ class WavePlus(BluetoothSensor):
         self._sensor_version: Optional[int] = None
         self.read_time: Optional[float] = None
 
-    async def discover(self) -> Optional[str]:
-        """Discover the Wave Plus device by scanning for its serial number.
+    def _detection_callback(
+        self,
+        device: BLEDevice,
+        advertisement_data: AdvertisementData,
+        found_devices: Set[str],
+    ) -> None:
+        """Detect Wave Plus devices by their serial number in the manufacturer data.
 
-        Returns:
-            The device address if found, None otherwise
+        Args:
+            device: The discovered BLE device
+            advertisement_data: Advertisement data from the device
+            found_devices: Set to add device addresses to when found
         """
-        self.logger.debug(
-            f"Scanning for Airthings Wave Plus with serial number {self.serial_number}..."
-        )
-
-        found_device_address = None
-
-        def detection_callback(
-            device: BLEDevice, advertisement_data: AdvertisementData
-        ) -> None:
-            print(
-                f"device_name: {device.name}, device_address: {device.address}, advertisement_data: {advertisement_data}"
-            )
-            nonlocal found_device_address
-            if AIRTHINGS_MFG_ID in advertisement_data.manufacturer_data:
-                mfg_data = advertisement_data.manufacturer_data[AIRTHINGS_MFG_ID]
-                serial_number, _ = struct.unpack("<LH", mfg_data)
-                if serial_number == self.serial_number:
-                    found_device_address = device.address
-
-        scanner = BleakScanner(detection_callback=detection_callback)
-
-        await scanner.start()
-        await asyncio.sleep(10.0)  # Scan for 5 seconds
-        await scanner.stop()
-
-        if found_device_address:
-            self.logger.debug(f"Found device: {found_device_address}")
-        else:
-            self.logger.debug("Device not found")
-
-        return found_device_address
+        if AIRTHINGS_MFG_ID in advertisement_data.manufacturer_data:
+            mfg_data = advertisement_data.manufacturer_data[AIRTHINGS_MFG_ID]
+            serial_number, _ = struct.unpack("<LH", mfg_data)
+            if serial_number == self.serial_number:
+                found_devices.add(device.address)
 
     async def read(self) -> bool:
         """Read sensor values from the Wave Plus device.
