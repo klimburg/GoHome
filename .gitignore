@@ -168,6 +168,5 @@ dmypy.json
 *~
 
 # Project-specific
-config.yaml
 secrets.yaml
 *.sqlite

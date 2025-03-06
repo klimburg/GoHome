@@ -1,0 +1,19 @@
+sensors:
+  - name: "MainBedroom"
+    serial_number: 2930217056
+    type: "WavePlus"
+    sample_period: 10
+    address: "A0:6C:65:46:5C:CB"
+  - name: "Playroom"
+    serial_number: "GVH5100_4E95"
+    type: "GVH5100"
+    sample_period: 10
+  - name: "EmmaBedroom"
+    serial_number: "GVH5100_2B6D"
+    type: "GVH5100"
+    sample_period: 10
+  - name: "LiamBedroom"
+    serial_number: "GVH5100_2660"
+    type: "GVH5100"
+    sample_period: 10
+
