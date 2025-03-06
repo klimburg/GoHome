@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ from sift_py.ingestion.channel import (
 from sift_py.ingestion.config.telemetry import TelemetryConfig
 from sift_py.ingestion.flow import Flow, FlowConfig
 from sift_py.ingestion.service import IngestionService
-
+from sift_py.grpc.transport import SiftChannel
 # Import sensor classes
 from bluetooth_sensors.sensors import gvh5100, wave_plus
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor  # Add this import
@@ -41,8 +41,8 @@ BASE_URI = os.getenv("BASE_URI")
 USE_SSL = os.getenv("USE_SSL", "true").lower() == "true"
 
 # Asset name for Sift
-ASSET_NAME = "HomeAirQuality"
-CONFIG_KEY = "home-air-quality-config-v1"
+ASSET_NAME = "LimburgHome"
+CONFIG_KEY = "limburg-home-config-v1"
 
 # Map of sensor types to their classes
 SENSOR_TYPES = {
@@ -56,47 +56,160 @@ SENSOR_CHANNELS = {
     "GVH5100": gvh5100.CHANNELS,
 }
 
+# Global mutex for Bluetooth operations
+BT_MUTEX = asyncio.Lock()
 
-async def read_sensor_data(sensor_instance: BluetoothSensor) -> Dict[str, Any]:
-    """Read data from a sensor.
 
-    Args:
-        sensor_instance: Instance of a BluetoothSensor
+class SensorTask:
+    """Task for reading from a sensor at a specified interval."""
 
-    Returns:
-        Dictionary containing sensor data
-    """
-    try:
-        # Connect to sensor
-        connected = await sensor_instance.connect(retries=3)
-        if not connected:
-            logger.error(f"Failed to connect to sensor {sensor_instance.serial_number}")
-            return {}
+    def __init__(
+        self,
+        sensor_name: str,
+        sensor_instance: BluetoothSensor,
+        ingestion_service: IngestionService,
+        flow_config: FlowConfig,
+        sample_period: int = 60,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        """Initialize the sensor task.
 
-        # Read data
-        success = await sensor_instance.read()
+        Args:
+            sensor_name: Name of the sensor
+            sensor_instance: Instance of a BluetoothSensor
+            ingestion_service: The Sift ingestion service
+            flow_config: Flow configuration for this sensor
+            sample_period: Time in seconds between readings
+            logger: Optional logger instance
+        """
+        self.sensor_name = sensor_name
+        self.sensor_instance = sensor_instance
+        self.ingestion_service = ingestion_service
+        self.flow_config = flow_config
+        self.sample_period = sample_period
+        self.logger = logger or logging.getLogger(__name__)
+        self.task: Optional[asyncio.Task] = None
+        self.running = False
 
-        # Get sensor data
-        if success:
-            # Use the common get_channel_data method and extract just the values
-            channel_data = sensor_instance.get_channel_data()
-            data = {name: info["value"] for name, info in channel_data.items()}
-            return data
-        else:
-            logger.warning(
-                f"Failed to read from sensor {sensor_instance.serial_number}"
+    async def read_sensor_data(self) -> Dict[str, Any]:
+        """Read data from the sensor with mutex protection."""
+        # Use global mutex to ensure only one Bluetooth operation at a time
+        async with BT_MUTEX:
+            try:
+                # Connect to sensor
+                connected = await self.sensor_instance.connect(retries=3)
+                if not connected:
+                    self.logger.error(f"Failed to connect to sensor {self.sensor_name}")
+                    return {}
+
+                # Read data
+                success = await self.sensor_instance.read()
+
+                # Get sensor data
+                if success:
+                    # Use the common get_channel_data method and extract just the values
+                    channel_data = self.sensor_instance.get_channel_data()
+                    data = {name: info["value"] for name, info in channel_data.items()}
+                    return data
+                else:
+                    self.logger.warning(
+                        f"Failed to read from sensor {self.sensor_name}"
+                    )
+                    return {}
+
+            except Exception as e:
+                self.logger.exception(f"Error reading sensor data: {e}")
+                return {}
+            finally:
+                # Disconnect from sensor
+                await self.sensor_instance.disconnect()
+
+    async def send_data_to_sift(self, data: Dict[str, Any]) -> None:
+        """Send sensor data to Sift.
+
+        Args:
+            data: Dictionary with channel names as keys and values as values
+        """
+        if not data:
+            return
+
+        self.logger.info(f"Got data from {self.sensor_name}: {data}")
+
+        channel_values = []
+
+        for channel_config in self.flow_config.channels:
+            channel_name = channel_config.name
+            value = data.get(channel_name)
+            self.logger.debug(
+                f"Channel {channel_name}: value={value}, type={type(value)}"
             )
-            return {}
 
-    except Exception as e:
-        logger.exception(f"Error reading sensor data: {e}")
-        return {}
-    finally:
-        # Disconnect from sensor
-        await sensor_instance.disconnect()
+            if value is None:
+                self.logger.warning(f"No value for channel {channel_name}")
+                continue
+
+            channel_values.append(
+                ChannelValue(
+                    channel_name=channel_name,
+                    value=channel_config.try_value_from(value),
+                )
+            )
+
+        # Ingest data
+        if channel_values:
+            self.logger.debug(f"Ingesting channel values: {channel_values}")
+            self.ingestion_service.try_ingest_flows(
+                Flow(
+                    flow_name=self.flow_config.name,
+                    timestamp=datetime.now(timezone.utc),
+                    channel_values=channel_values,
+                )
+            )
+            self.logger.info(
+                f"Data sent to Sift for {self.sensor_name} with flow {self.flow_config.name}"
+            )
+
+    async def run(self) -> None:
+        """Run the sensor reading task."""
+        self.running = True
+        self.logger.info(
+            f"Starting sensor task for {self.sensor_name} with period {self.sample_period}s"
+        )
+
+        while self.running:
+            try:
+                # Read sensor data
+                data = await self.read_sensor_data()
+
+                # Send data to Sift
+                await self.send_data_to_sift(data)
+
+            except asyncio.CancelledError:
+                self.logger.info(f"Sensor task for {self.sensor_name} cancelled")
+                self.running = False
+                break
+            except Exception as e:
+                self.logger.exception(
+                    f"Error in sensor task for {self.sensor_name}: {e}"
+                )
+
+            # Wait for next reading
+            self.logger.debug(f"Waiting {self.sample_period}s for next reading")
+            await asyncio.sleep(self.sample_period)
+
+    def start(self) -> None:
+        """Start the sensor task."""
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.run())
+
+    def stop(self) -> None:
+        """Stop the sensor task."""
+        self.running = False
+        if self.task and not self.task.done():
+            self.task.cancel()
 
 
-def build_telemetry_config(
+async def build_telemetry_config(
     sensors_config: List[Dict[str, Any]],
 ) -> Tuple[TelemetryConfig, Dict[str, FlowConfig]]:
     """Build a telemetry config based on available sensors.
@@ -158,6 +271,79 @@ def build_telemetry_config(
     return telemetry_config, sensor_to_flow_map
 
 
+async def setup_sift_connection() -> Tuple[IngestionService, SiftChannel, List[Dict[str, Any]], Dict[str, FlowConfig]]:
+    """Set up connection to Sift.
+
+    Returns:
+        Tuple of (IngestionService, grpc_channel)
+    """
+    if SIFT_API_KEY is None or BASE_URI is None:
+        raise ValueError("SIFT_API_KEY and BASE_URI must be set")
+
+    credentials = SiftChannelConfig(
+        apikey=SIFT_API_KEY,
+        uri=BASE_URI,
+        use_ssl=USE_SSL,
+    )
+    logger.info(f"Connecting to Sift at {BASE_URI}")
+
+    # Create the channel without using async with
+    grpc_channel = use_sift_channel(credentials)
+
+    # Create telemetry config
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Extract sensor configs
+    sensors_config = config.get("sensors", [])
+    logger.info(f"Sensors config: {sensors_config}")
+
+    # Build telemetry config
+    telemetry_config, sensor_to_flow_map = await build_telemetry_config(sensors_config)
+
+    # Create ingestion service
+    ingestion_service = IngestionService(grpc_channel, telemetry_config)
+
+    # Create a run
+    run_name = f"{ASSET_NAME}.{datetime.now().timestamp():.0f}"
+    logger.info(f"Creating run: {run_name}")
+    ingestion_service.attach_run(grpc_channel, run_name)
+
+    return ingestion_service, grpc_channel, sensors_config, sensor_to_flow_map
+
+
+def create_sensor_instances(
+    sensors_config: List[Dict[str, Any]],
+) -> List[Tuple[str, BluetoothSensor, int]]:
+    """Create sensor instances from configuration.
+
+    Args:
+        sensors_config: List of sensor configurations
+
+    Returns:
+        List of tuples (sensor_name, sensor_instance, sample_period)
+    """
+    sensor_instances = []
+
+    for sensor_config in sensors_config:
+        sensor_type = sensor_config["type"]
+        if sensor_type in SENSOR_TYPES:
+            sensor_class = SENSOR_TYPES[sensor_type]
+            sensor_instance = sensor_class(
+                sensor_config["serial_number"],
+                name=sensor_config["name"],
+                address=sensor_config.get("address", None),
+                logger=logger,
+            )
+            sample_period = sensor_config.get("sample_period", 60)
+            sensor_instances.append(
+                (sensor_config["name"], sensor_instance, sample_period)
+            )
+
+    return sensor_instances
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments.
 
@@ -185,137 +371,66 @@ async def main() -> None:
         logging.getLogger("bluetooth_sensors").setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
 
-    # Load sensor configuration
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-        return
+        # Set up Sift connection
+        (
+            ingestion_service,
+            grpc_channel,
+            sensors_config,
+            sensor_to_flow_map,
+        ) = await setup_sift_connection()
 
-    # Extract sensor configs
-    sensors_config = config.get("sensors", [])
-    logger.info(f"Sensors config: {sensors_config}")
-    if not sensors_config:
-        logger.error("No sensors configured")
-        return
+        # Create sensor instances
+        sensor_tuples = create_sensor_instances(sensors_config)
 
-    # Build telemetry config and get sensor-to-flow mapping
-    telemetry_config, sensor_to_flow_map = build_telemetry_config(sensors_config)
+        if not sensor_tuples:
+            logger.error("No valid sensor instances created")
+            return
 
-    # Create sensor instances
-    sensor_instances = []
-    for sensor_config in sensors_config:
-        sensor_type = sensor_config["type"]
-        if sensor_type in SENSOR_TYPES:
-            sensor_class = SENSOR_TYPES[sensor_type]
-            sensor_instance = sensor_class(
-                sensor_config["serial_number"],
-                name=sensor_config["name"],
-                address=sensor_config.get("address", None),
+        # Create and start sensor tasks
+        sensor_tasks = []
+        for sensor_name, sensor_instance, sample_period in sensor_tuples:
+            flow_config = sensor_to_flow_map.get(sensor_name)
+            if flow_config is None:
+                logger.error(f"No flow mapping for sensor {sensor_name}")
+                continue
+
+            task = SensorTask(
+                sensor_name=sensor_name,
+                sensor_instance=sensor_instance,
+                ingestion_service=ingestion_service,
+                flow_config=flow_config,
+                sample_period=sample_period,
                 logger=logger,
             )
-            sensor_instances.append((sensor_config["name"], sensor_instance))
+            task.start()
+            sensor_tasks.append(task)
 
-    if not sensor_instances:
-        logger.error("No valid sensor instances created")
-        return
-
-    # Connect to Sift
-
-    if SIFT_API_KEY is None or BASE_URI is None:
-        raise ValueError("SIFT_API_KEY and BASE_URI must be set")
-
-    credentials = SiftChannelConfig(
-        apikey=SIFT_API_KEY,
-        uri=BASE_URI,
-        use_ssl=USE_SSL,
-    )
-    logger.info(f"Credentials: {credentials}")
-    logger.info(f"Connecting to Sift at {BASE_URI}")
-
-    # Create the channel without using async with
-    grpc_channel = use_sift_channel(credentials)
-
-    try:
-        # Create ingestion service
-        ingestion_service = IngestionService(grpc_channel, telemetry_config)
-
-        # Create a run
-        run_name = f"{ASSET_NAME}.{datetime.now().timestamp():.0f}"
-        logger.info(f"Creating run: {run_name}")
-        ingestion_service.attach_run(grpc_channel, run_name)
-
-        # Main loop to read and send data
+        # Main loop - just wait for keyboard interrupt
         try:
             while True:
-                logger.info("Reading from sensors...")
-                for sensor_name, sensor_instance in sensor_instances:
-                    # Read sensor data
-                    data = await read_sensor_data(sensor_instance)
-
-                    if data:
-                        logger.info(f"Got data from {sensor_name}: {data}")
-
-                        # Get the correct flow name from the mapping
-                        flow_config = sensor_to_flow_map.get(sensor_name)
-                        if flow_config is None:
-                            logger.error(f"No flow mapping for sensor {sensor_name}")
-                            continue
-
-                        channel_values = []
-
-                        for channel_config in flow_config.channels:
-                            channel_name = channel_config.name
-                            value = data.get(channel_name)
-                            logger.debug(
-                                f"Ingesting data for {sensor_name}: channel_name: {channel_name}, value: {value}, type: {type(value)}"
-                            )
-                            if value is None:
-                                logger.warning(f"No value for channel {channel_name}")
-                                continue
-
-                            if channel_name == "Playroom.error":
-                                logger.debug(
-                                    f"Error value: {value}, type: {type(value)}, channel_type: {channel_config.data_type}, is_bool: {isinstance(value, bool)}"
-                                )
-
-                            channel_values.append(
-                                ChannelValue(
-                                    channel_name=channel_name,
-                                    value=channel_config.try_value_from(value),
-                                )
-                            )
-
-                        # Ingest data
-                        if channel_values:
-                            logger.debug(
-                                f"Ingesting data for {sensor_name}: channel_values: {channel_values}"
-                            )
-                            ingestion_service.try_ingest_flows(
-                                Flow(
-                                    flow_name=flow_config.name,
-                                    timestamp=datetime.now(timezone.utc),
-                                    channel_values=channel_values,
-                                )
-                            )
-                            logger.info(
-                                f"Data sent to Sift for {sensor_name} with flow {flow_config.name}"
-                            )
-
-                # Wait before next reading
-                logger.info("Waiting 20 seconds for next reading")
-                await asyncio.sleep(20)
-
+                await asyncio.sleep(1)
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
-        except Exception as e:
-            logger.exception(f"Error in main loop: {e}")
+        finally:
+            # Stop all sensor tasks
+            for task in sensor_tasks:
+                task.stop()
+
+            # Wait for all tasks to finish
+            await asyncio.gather(
+                *[task.task for task in sensor_tasks if task.task],
+                return_exceptions=True,
+            )
+
+    except Exception as e:
+        logger.exception(f"Error in main: {e}")
     finally:
         # Clean up the channel
-        logger.info("Closing Sift connection")
-        grpc_channel.close()
+        if "grpc_channel" in locals():
+            logger.info("Closing Sift connection")
+            grpc_channel.close()
+
         logger.info("Shutting down")
 
 
