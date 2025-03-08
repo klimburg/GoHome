@@ -16,4 +16,44 @@ sensors:
     serial_number: "GVH5100_2660"
     type: "GVH5100"
     sample_period: 10
-
+  - name: "LiamSmartPlug"
+    type: "Kasa"
+    model: "KP125M"
+    sample_period: 10
+    address: "192.168.50.202"
+  - name: "PlayroomSwitch"
+    type: "Kasa"
+    model: "HS220"
+    sample_period: 10
+    address: "192.168.50.21"
+  - name: "DiningRoomLight"
+    type: "Kasa"
+    model: "KS225"
+    sample_period: 10
+    address: "192.168.50.90"
+  - name: "EmmaLights"
+    type: "Kasa"
+    model: "KS225"
+    sample_period: 10
+    address: "192.168.50.204"
+  - name: "FamilyRoomLights"
+    type: "Kasa"
+    model: "HS220"
+    sample_period: 10
+    address: "192.168.50.242"
+  - name: "GarageLights"
+    type: "Kasa"
+    model: "KS205"
+    sample_period: 10
+    address: "192.168.50.170"
+  - name: "LiamLightSwitch"
+    type: "Kasa"
+    model: "HS220"
+    sample_period: 10
+    address: "192.168.50.154"
+  - name: "LivingRoomLights"
+    type: "Kasa"
+    model: "KS225"
+    sample_period: 10
+    address: "192.168.50.88"
+  
