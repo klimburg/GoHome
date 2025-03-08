@@ -20,6 +20,7 @@ class ChannelDict(TypedDict):
     conversion: ConversionFunc
     unit: str
     sift_type: ChannelDataType
+    is_sensor: bool
 
 
 class BluetoothSensor(ABC):
