@@ -309,22 +309,22 @@ class KasaSensor:
                         if key.startswith(f"{child_alias}.")
                     ]
 
-                    for feature_key in child_feature_keys:
-                        feature_info = self.child_features[feature_key]
+                    for child_feature_key in child_feature_keys:
+                        feature_info = self.child_features[child_feature_key]
                         # Get feature name and handle potential None value
                         feature_name_value = feature_info.get("feature_name")
                         if not feature_name_value:  # Skip if no feature name
                             continue
 
                         # Now we know feature_name_value is not None
-                        feature_name: str = feature_name_value
+                        child_feature_name: str = feature_name_value
 
-                        if feature_name in child.features:
-                            feature = child.features.get(feature_name)
+                        if child_feature_name in child.features:
+                            feature = child.features.get(child_feature_name)
                             if feature is None:
                                 continue
 
-                            channel_name = f"{self.name}.{feature_key}"
+                            channel_name = f"{self.name}.{child_feature_key}"
                             data[channel_name] = {
                                 "value": feature.value,
                                 "unit": feature.unit,

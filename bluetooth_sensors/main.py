@@ -17,7 +17,11 @@ from dotenv import load_dotenv
 from sift_py.grpc.transport import SiftChannel, SiftChannelConfig, use_sift_channel
 from sift_py.ingestion.channel import (
     ChannelConfig,
+    ChannelDataType,
     ChannelValue,
+    double_value,
+    int32_value,
+    string_value,
 )
 from sift_py.ingestion.config.telemetry import TelemetryConfig
 from sift_py.ingestion.flow import Flow, FlowConfig
@@ -66,6 +70,8 @@ SENSOR_CHANNELS = {
 
 # Global mutex for Bluetooth operations
 BT_MUTEX = asyncio.Lock()
+
+MAIN_PROC_UPDATE_INTERVAL = 10
 
 
 class BaseTask:
@@ -368,15 +374,131 @@ class KasaSensorTask(BaseTask):
             self.task.cancel()
 
 
+class SiftLogHandler(logging.Handler):
+    """A logging handler that sends log messages to Sift."""
+
+    def __init__(
+        self, ingestion_service: IngestionService, flow_name: str, channel_name: str
+    ) -> None:
+        """Initialize the SiftLogHandler.
+
+        Args:
+            ingestion_service: The Sift ingestion service
+            flow_name: The flow name to use for log messages
+            channel_name: The channel name to use for log messages
+        """
+        super().__init__()
+        self.ingestion_service = ingestion_service
+        self.flow_name = flow_name
+        self.channel_name = channel_name
+        self.setLevel(logging.INFO)
+        self.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Send the log record to Sift.
+
+        Args:
+            record: The log record to send
+        """
+        try:
+            msg = self.format(record)
+            self.ingestion_service.try_ingest_flows(
+                Flow(
+                    flow_name=self.flow_name,
+                    timestamp=datetime.now(timezone.utc),
+                    channel_values=[
+                        ChannelValue(
+                            channel_name=self.channel_name,
+                            value=string_value(msg),
+                        )
+                    ],
+                )
+            )
+        except Exception:
+            self.handleError(record)
+
+
+async def create_main_process_flow(asset_name: str) -> FlowConfig:
+    """Create a flow config for the main process.
+
+    Args:
+        asset_name: The asset name
+
+    Returns:
+        FlowConfig for the main process
+    """
+    # Create channels for main process
+    log_channel = ChannelConfig(
+        name="log_message",
+        data_type=ChannelDataType.STRING,
+        unit="",
+    )
+
+    task_count_channel = ChannelConfig(
+        name="active_tasks",
+        data_type=ChannelDataType.INT_32,
+        unit="count",
+    )
+
+    uptime_channel = ChannelConfig(
+        name="uptime",
+        data_type=ChannelDataType.DOUBLE,
+        unit="seconds",
+    )
+
+    # Create flow for main process
+    flow_name = f"{asset_name}-main-process-{int(time.time())}"
+
+    return FlowConfig(
+        name=flow_name,
+        channels=[log_channel, task_count_channel, uptime_channel],
+    )
+
+
+async def update_main_proc_telem(
+    ingestion_service: IngestionService,
+    flow_name: str,
+    tasks: List[BaseTask],
+    start_time: float,
+) -> None:
+    """Update the task count in Sift.
+
+    Args:
+        ingestion_service: The Sift ingestion service
+        flow_name: The flow name
+        tasks: The list of tasks
+    """
+    active_count = sum(1 for task in tasks if task.task and not task.task.done())
+
+    ingestion_service.try_ingest_flows(
+        Flow(
+            flow_name=flow_name,
+            timestamp=datetime.now(timezone.utc),
+            channel_values=[
+                ChannelValue(
+                    channel_name="active_tasks",
+                    value=int32_value(active_count),
+                ),
+                ChannelValue(
+                    channel_name="uptime",
+                    value=double_value(time.time() - start_time),
+                ),
+            ],
+        )
+    )
+
+
 async def build_telemetry_config(
     sensors_config: List[Dict[str, Any]],
     kasa_flow_configs: Optional[List[FlowConfig]] = None,
+    main_flow_config: Optional[FlowConfig] = None,
 ) -> Tuple[TelemetryConfig, Dict[str, FlowConfig]]:
     """Build a telemetry config based on available sensors.
 
     Args:
         sensors_config: List of sensor configurations
         kasa_flow_configs: Optional list of FlowConfig objects for Kasa devices
+        main_flow_config: Optional FlowConfig for the main process
 
     Returns:
         Tuple of (TelemetryConfig for Sift, mapping of sensor names to flow names)
@@ -437,6 +559,11 @@ async def build_telemetry_config(
             device_name = flow_config.name.split("-readings-")[0]
             sensor_to_flow_map[device_name] = flow_config
 
+    # Add main process flow if provided
+    if main_flow_config:
+        flows.append(main_flow_config)
+        logger.debug(f"Added main process flow: {main_flow_config.name}")
+
     # Create the telemetry config
     telemetry_config = TelemetryConfig(
         asset_name=ASSET_NAME, ingestion_client_key=CONFIG_KEY, flows=flows
@@ -451,11 +578,12 @@ async def setup_sift_connection() -> Tuple[
     List[Dict[str, Any]],
     Dict[str, FlowConfig],
     List[KasaSensor],
+    str,  # Add main flow name as a return value
 ]:
     """Set up connection to Sift.
 
     Returns:
-        Tuple of (IngestionService, grpc_channel, sensors_config, sensor_to_flow_map, kasa_sensors)
+        Tuple of (IngestionService, grpc_channel, sensors_config, sensor_to_flow_map, kasa_sensors, main_flow_name)
     """
     if SIFT_API_KEY is None or BASE_URI is None:
         raise ValueError("SIFT_API_KEY and BASE_URI must be set")
@@ -500,11 +628,15 @@ async def setup_sift_connection() -> Tuple[
             "Kasa credentials not found in environment variables, skipping Kasa device telemetry"
         )
 
-    # Build telemetry config including both BLE and Kasa devices
+    # Create main process flow config
+    main_flow_config = await create_main_process_flow(ASSET_NAME)
+    main_flow_name = main_flow_config.name
+
+    # Build telemetry config including both BLE, Kasa devices, and main process
     telemetry_config, sensor_to_flow_map = await build_telemetry_config(
-        sensors_config, kasa_flow_configs
+        sensors_config, kasa_flow_configs, main_flow_config
     )
-    logger.info(f"Telemetry config: {telemetry_config}")
+    logger.info(f"Built telemetry config with {len(telemetry_config.flows)} flows")
 
     # Create ingestion service
     ingestion_service = IngestionService(grpc_channel, telemetry_config)
@@ -520,6 +652,7 @@ async def setup_sift_connection() -> Tuple[
         sensors_config,
         sensor_to_flow_map,
         kasa_sensors,
+        main_flow_name,  # Return the main flow name
     )
 
 
@@ -583,6 +716,7 @@ async def main() -> None:
     """Main function to read sensor data and upload to Sift."""
     # Parse command line arguments
     args = parse_args()
+    start_time = time.time()
 
     # Set logging level based on verbose flag
     if args.verbose:
@@ -599,7 +733,19 @@ async def main() -> None:
             sensors_config,
             sensor_to_flow_map,
             kasa_sensors,
+            main_flow_name,  # Get the main flow name
         ) = await setup_sift_connection()
+
+        # Add Sift log handler
+        sift_log_handler = SiftLogHandler(
+            ingestion_service=ingestion_service,
+            flow_name=main_flow_name,
+            channel_name="log_message",
+        )
+        logger.addHandler(sift_log_handler)
+        logging.getLogger("bluetooth_sensors").addHandler(sift_log_handler)
+
+        logger.info("Main process flow created and log handler added")
 
         # Track all tasks
         all_tasks: List[BaseTask] = []
@@ -660,13 +806,37 @@ async def main() -> None:
             logger.error("No sensor tasks created, nothing to do")
             return
 
+        # Send initial task count
+        await update_main_proc_telem(
+            ingestion_service, main_flow_name, all_tasks, start_time
+        )
+        logger.info(f"Initial task count: {len(all_tasks)}")
+
         # Main loop - just wait for keyboard interrupt
         try:
+            last_task_count_update = time.time()
+
             while True:
                 await asyncio.sleep(1)
+
+                # Update task count periodically
+                current_time = time.time()
+                if current_time - last_task_count_update >= MAIN_PROC_UPDATE_INTERVAL:
+                    await update_main_proc_telem(
+                        ingestion_service, main_flow_name, all_tasks, start_time
+                    )
+                    last_task_count_update = current_time
+                    logger.debug(f"Updated task count: {len(all_tasks)}")
+
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         finally:
+            # Send final task count
+            await update_main_proc_telem(
+                ingestion_service, main_flow_name, all_tasks, start_time
+            )
+            logger.info("Shutting down tasks")
+
             # Stop all sensor tasks
             for task in all_tasks:  # type: ignore
                 task.stop()
@@ -680,6 +850,11 @@ async def main() -> None:
     except Exception as e:
         logger.exception(f"Error in main: {e}")
     finally:
+        # Remove the Sift log handler to avoid errors during shutdown
+        if "sift_log_handler" in locals():
+            logger.removeHandler(sift_log_handler)
+            logging.getLogger("bluetooth_sensors").removeHandler(sift_log_handler)
+
         # Clean up the channel
         if "grpc_channel" in locals():
             logger.info("Closing Sift connection")
