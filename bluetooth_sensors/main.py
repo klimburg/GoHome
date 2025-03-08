@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import kasa
 import yaml
@@ -68,7 +68,25 @@ SENSOR_CHANNELS = {
 BT_MUTEX = asyncio.Lock()
 
 
-class SensorTask:
+class BaseTask:
+    """Base class for all sensor tasks."""
+
+    task: Optional[asyncio.Task] = None
+
+    async def run(self) -> None:
+        """Run the task."""
+        pass
+
+    def start(self) -> None:
+        """Start the task."""
+        pass
+
+    def stop(self) -> None:
+        """Stop the task."""
+        pass
+
+
+class SensorTask(BaseTask):
     """Task for reading from a sensor at a specified interval."""
 
     def __init__(
@@ -96,7 +114,6 @@ class SensorTask:
         self.flow_config = flow_config
         self.sample_period = sample_period
         self.logger = logger or logging.getLogger(__name__)
-        self.task: Optional[asyncio.Task] = None
         self.running = False
 
     async def read_sensor_data(self) -> Dict[str, Any]:
@@ -217,7 +234,7 @@ class SensorTask:
             self.task.cancel()
 
 
-class KasaSensorTask:
+class KasaSensorTask(BaseTask):
     """Task for reading from a Kasa device at a specified interval."""
 
     def __init__(
@@ -241,7 +258,6 @@ class KasaSensorTask:
         self.ingestion_service = ingestion_service
         self.flow_config = flow_config
         self.logger = logger or logging.getLogger(__name__)
-        self.task: Optional[asyncio.Task] = None
         self.running = False
 
     async def read_sensor_data(self) -> Dict[str, Any]:
@@ -471,8 +487,12 @@ async def setup_sift_connection() -> Tuple[
             username=KASA_USERNAME, password=KASA_PASSWORD
         )
         logger.info("Setting up Kasa device telemetry")
+
         kasa_sensors, kasa_flow_configs = await setup_kasa_telemetry(
-            config_path, kasa_credentials, logger
+            config_path=config_path,
+            credentials=kasa_credentials,
+            device_name=None,
+            logger=logger,
         )
         logger.info(f"Found {len(kasa_sensors)} Kasa devices")
     else:
@@ -581,8 +601,8 @@ async def main() -> None:
             kasa_sensors,
         ) = await setup_sift_connection()
 
-        # Track all tasks - use Union type to handle both task types
-        all_tasks: List[Union[SensorTask, KasaSensorTask]] = []
+        # Track all tasks
+        all_tasks: List[BaseTask] = []
 
         # Create and start BLE sensor tasks if not skipped
         if not args.skip_ble:
@@ -599,7 +619,7 @@ async def main() -> None:
                         logger.error(f"No flow mapping for sensor {sensor_name}")
                         continue
 
-                    task = SensorTask(
+                    sensor_task: SensorTask = SensorTask(
                         sensor_name=sensor_name,
                         sensor_instance=sensor_instance,
                         ingestion_service=ingestion_service,
@@ -607,8 +627,8 @@ async def main() -> None:
                         sample_period=sample_period,
                         logger=logger,
                     )
-                    task.start()
-                    all_tasks.append(task)
+                    sensor_task.start()
+                    all_tasks.append(sensor_task)  # type: ignore
                     logger.info(f"Started task for BLE sensor {sensor_name}")
         else:
             logger.info("Skipping BLE sensor data collection")
@@ -621,14 +641,14 @@ async def main() -> None:
                     logger.error(f"No flow mapping for Kasa sensor {kasa_sensor.name}")
                     continue
 
-                task = KasaSensorTask(
+                kasa_task: KasaSensorTask = KasaSensorTask(
                     kasa_sensor=kasa_sensor,
                     ingestion_service=ingestion_service,
                     flow_config=flow_config,
                     logger=logger,
                 )
-                task.start()
-                all_tasks.append(task)
+                kasa_task.start()
+                all_tasks.append(kasa_task)  # type: ignore
                 logger.info(f"Started task for Kasa device {kasa_sensor.name}")
         else:
             if args.skip_kasa:
@@ -648,10 +668,10 @@ async def main() -> None:
             logger.info("Interrupted by user")
         finally:
             # Stop all sensor tasks
-            for task in all_tasks:
+            for task in all_tasks:  # type: ignore
                 task.stop()
 
-            # Wait for all tasks to finish
+            # Wait for all tasks to finish with correct type annotation
             await asyncio.gather(
                 *[task.task for task in all_tasks if task.task],
                 return_exceptions=True,

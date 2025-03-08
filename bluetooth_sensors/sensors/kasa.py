@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 import os
@@ -52,6 +53,9 @@ class KasaSensor:
         self.credentials = credentials
         self.device_instance: Optional[kasa.SmartDevice] = None
         self.features: Dict[str, Dict[str, Any]] = {}
+        self.child_features: Dict[
+            str, Dict[str, Any]
+        ] = {}  # Store child device features separately
         self.logger = logger or logging.getLogger(__name__)
         self.channel_configs: List[ChannelConfig] = []
 
@@ -79,6 +83,19 @@ class KasaSensor:
             self.logger.info(
                 f"Connected to {self.name} ({self.device_instance.alias}) at {self.address}"
             )
+
+            # Check if the device has children
+            if (
+                hasattr(self.device_instance, "children")
+                and self.device_instance.children
+            ):
+                self.logger.info(
+                    f"Device has {len(self.device_instance.children)} children"
+                )
+                for child in self.device_instance.children:
+                    await child.update()
+                    self.logger.debug(f"Child device: {child.alias}")
+
             return True
         except Exception as e:
             self.logger.error(f"Error connecting to {self.name} at {self.address}: {e}")
@@ -99,7 +116,9 @@ class KasaSensor:
             await self.device_instance.update()
 
             device_features = {}
-            # Explore the features
+            self.child_features = {}  # Reset child features
+
+            # First handle the main device features
             for feature_name in self.device_instance.features:
                 feature = self.device_instance.features.get(feature_name)
                 if feature is None:
@@ -107,7 +126,9 @@ class KasaSensor:
 
                 # Get feature type
                 value_type = type(feature.value)
-                self.logger.debug(f"Feature: {feature_name} = {feature.value} (type: {value_type})")
+                self.logger.debug(
+                    f"Main feature: {feature_name} = {feature.value} (type: {value_type})"
+                )
 
                 # Only include supported types
                 if value_type in TYPE_MAPPING:
@@ -122,7 +143,71 @@ class KasaSensor:
                     )
 
             self.features = device_features
-            return device_features
+
+            # Now handle child devices if any
+            if (
+                hasattr(self.device_instance, "children")
+                and self.device_instance.children
+            ):
+                for child in self.device_instance.children:
+                    try:
+                        await child.update()
+                        # Safely handle the case where alias might be None
+                        child_alias = "Child"
+                        if hasattr(child, "alias") and child.alias is not None:
+                            child_alias = child.alias.replace(
+                                " ", "_"
+                            )  # Replace spaces with underscores
+                        else:
+                            child_alias = (
+                                f"Child_{id(child)}"  # Use object id as fallback
+                            )
+
+                        self.logger.debug(f"Processing child device: {child_alias}")
+
+                        # Get features from the child device
+                        for feature_name in child.features:
+                            feature = child.features.get(feature_name)
+                            if feature is None:
+                                continue
+
+                            value_type = type(feature.value)
+                            self.logger.debug(
+                                f"Child feature: {child_alias}.{feature_name} = {feature.value} (type: {value_type})"
+                            )
+
+                            # Only include supported types
+                            if value_type in TYPE_MAPPING:
+                                # Use child_alias.feature_name as the key
+                                feature_key = f"{child_alias}.{feature_name}"
+                                self.child_features[feature_key] = {
+                                    "child": child,
+                                    "feature_name": feature_name,
+                                    "value": feature.value,
+                                    "unit": feature.unit,
+                                    "value_type": value_type,
+                                    "sift_type": TYPE_MAPPING.get(value_type),
+                                }
+                                self.logger.debug(
+                                    f"Added child feature: {feature_key} = {feature.value} {feature.unit}"
+                                )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error processing child device {getattr(child, 'alias', 'Unknown')}: {e}"
+                        )
+
+            # Log the summary of discovered features
+            total_features = len(self.features) + len(self.child_features)
+            self.logger.info(
+                f"Discovered {total_features} features ({len(self.features)} main, {len(self.child_features)} child)"
+            )
+
+            # Combine main device features and child features for the return value
+            combined_features = {
+                **self.features,
+                **{k: v for k, v in self.child_features.items() if "child" not in k},
+            }
+            return combined_features
 
         except Exception as e:
             self.logger.error(f"Error discovering features for {self.name}: {e}")
@@ -136,6 +221,7 @@ class KasaSensor:
         """
         channel_configs = []
 
+        # Add main device features
         for feature_name, feature_info in self.features.items():
             sift_type = feature_info.get("sift_type")
             if not sift_type:
@@ -151,7 +237,27 @@ class KasaSensor:
             )
             channel_configs.append(channel_config)
 
+        # Add child device features
+        for feature_key, feature_info in self.child_features.items():
+            sift_type = feature_info.get("sift_type")
+            if not sift_type:
+                continue
+
+            # Use the parent device name as prefix for consistency
+            channel_name = f"{self.name}.{feature_key}"
+            unit = feature_info.get("unit", "")
+
+            channel_config = ChannelConfig(
+                name=channel_name,
+                data_type=sift_type,
+                unit=unit,
+            )
+            channel_configs.append(channel_config)
+
         self.channel_configs = channel_configs
+        self.logger.info(
+            f"Generated {len(channel_configs)} channel configs for {self.name}"
+        )
         return channel_configs
 
     async def get_channel_data(self) -> Dict[str, Dict[str, Any]]:
@@ -169,7 +275,7 @@ class KasaSensor:
             await self.device_instance.update()
 
             data = {}
-            # Get values for each feature
+            # Get values for each main device feature
             for feature_name, feature_info in self.features.items():
                 feature = self.device_instance.features.get(feature_name)
                 if feature is None:
@@ -181,6 +287,49 @@ class KasaSensor:
                     "unit": feature.unit,
                 }
 
+            # Update child devices and get their feature values
+            if (
+                hasattr(self.device_instance, "children")
+                and self.device_instance.children
+            ):
+                for child in self.device_instance.children:
+                    await child.update()
+
+                    # Safely handle the case where alias might be None
+                    child_alias = "Child"
+                    if hasattr(child, "alias") and child.alias is not None:
+                        child_alias = child.alias.replace(" ", "_")
+                    else:
+                        child_alias = f"Child_{id(child)}"  # Use object id as fallback
+
+                    # Find all features for this child
+                    child_feature_keys = [
+                        key
+                        for key in self.child_features.keys()
+                        if key.startswith(f"{child_alias}.")
+                    ]
+
+                    for feature_key in child_feature_keys:
+                        feature_info = self.child_features[feature_key]
+                        # Get feature name and handle potential None value
+                        feature_name_value = feature_info.get("feature_name")
+                        if not feature_name_value:  # Skip if no feature name
+                            continue
+
+                        # Now we know feature_name_value is not None
+                        feature_name: str = feature_name_value
+
+                        if feature_name in child.features:
+                            feature = child.features.get(feature_name)
+                            if feature is None:
+                                continue
+
+                            channel_name = f"{self.name}.{feature_key}"
+                            data[channel_name] = {
+                                "value": feature.value,
+                                "unit": feature.unit,
+                            }
+
             return data
 
         except Exception as e:
@@ -191,6 +340,7 @@ class KasaSensor:
 async def load_kasa_devices(
     config_path: str,
     credentials: kasa.Credentials,
+    device_name: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
 ) -> List[KasaSensor]:
     """Load Kasa devices from config file.
@@ -198,6 +348,7 @@ async def load_kasa_devices(
     Args:
         config_path: Path to the config file
         credentials: Kasa credentials
+        device_name: Optional device name to filter by
         logger: Optional logger instance
 
     Returns:
@@ -217,6 +368,16 @@ async def load_kasa_devices(
                 device for device in config["sensors"] if device.get("type") == "Kasa"
             ]
 
+            # If a specific device name is provided, filter for that device
+            if device_name:
+                kasa_configs = [
+                    device
+                    for device in kasa_configs
+                    if device.get("name") == device_name
+                ]
+                if not kasa_configs:
+                    logger.warning(f"No Kasa device found with name: {device_name}")
+
             # Create KasaSensor objects
             for device_config in kasa_configs:
                 kasa_device = KasaSensor(device_config, credentials, logger)
@@ -235,6 +396,7 @@ async def load_kasa_devices(
 async def setup_kasa_telemetry(
     config_path: str,
     credentials: kasa.Credentials,
+    device_name: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
 ) -> Tuple[List[KasaSensor], List[FlowConfig]]:
     """Set up telemetry for Kasa devices.
@@ -242,6 +404,7 @@ async def setup_kasa_telemetry(
     Args:
         config_path: Path to the config file
         credentials: Kasa credentials
+        device_name: Optional device name to filter by
         logger: Optional logger instance
 
     Returns:
@@ -250,10 +413,14 @@ async def setup_kasa_telemetry(
     logger = logger or logging.getLogger(__name__)
 
     # Load devices from config
-    kasa_devices = await load_kasa_devices(config_path, credentials, logger)
+    kasa_devices = await load_kasa_devices(
+        config_path, credentials, device_name, logger
+    )
 
     if not kasa_devices:
-        logger.warning("No Kasa devices found in config")
+        # Fix the string concatenation issue by ensuring device_name is a string
+        name_info = f" with name: {device_name}" if device_name else ""
+        logger.warning(f"No Kasa devices found in config{name_info}")
         return [], []
 
     flow_configs = []
@@ -288,8 +455,35 @@ async def setup_kasa_telemetry(
     return kasa_devices, flow_configs
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Returns:
+        Parsed arguments
+    """
+    parser = argparse.ArgumentParser(
+        description="Discover and interact with Kasa devices"
+    )
+    parser.add_argument(
+        "--device",
+        help="Name of a specific device to discover (must match name in config.yaml)",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose (debug) logging"
+    )
+    return parser.parse_args()
+
+
 async def main() -> None:
     """Main function for testing."""
+    # Parse command line arguments
+    args = parse_args()
+
+    # Set logging level based on verbose flag
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
     # Load environment variables
     dotenv.load_dotenv(dotenv_path=os.path.join(os.path.dirname(PARENT_DIR), ".env"))
 
@@ -303,18 +497,36 @@ async def main() -> None:
     credentials = kasa.Credentials(username=kasa_username, password=kasa_password)
     config_path = os.path.join(PARENT_DIR, "config.yaml")
 
+    if args.device:
+        logger.info(f"Discovering specific device: {args.device}")
+    else:
+        logger.info("Discovering all Kasa devices")
+
     # Setup telemetry
     kasa_devices, flow_configs = await setup_kasa_telemetry(
-        config_path, credentials, logger
+        config_path, credentials, args.device, logger
     )
 
     # Print discovered devices and their features
     for device in kasa_devices:
         logger.info(f"Device: {device.name} ({device.model}) at {device.address}")
-        for feature_name, feature_info in device.features.items():
-            logger.info(
-                f"  Feature: {feature_name} = {feature_info['value']} {feature_info['unit']} (type: {feature_info['value_type']})"
-            )
+
+        # Print main device features
+        if device.features:
+            logger.info("Main device features:")
+            for feature_name, feature_info in device.features.items():
+                logger.info(
+                    f"  {feature_name} = {feature_info['value']} {feature_info['unit']} (type: {feature_info['value_type']})"
+                )
+
+        # Print child device features
+        if device.child_features:
+            logger.info("Child device features:")
+            for feature_key, feature_info in device.child_features.items():
+                if "child" not in feature_key:  # Skip internal keys
+                    logger.info(
+                        f"  {feature_key} = {feature_info['value']} {feature_info['unit']} (type: {feature_info['value_type']})"
+                    )
 
         # Get current channel data
         channel_data = await device.get_channel_data()

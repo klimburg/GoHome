@@ -56,4 +56,9 @@ sensors:
     model: "KS225"
     sample_period: 10
     address: "192.168.50.88"
+  - name: "BackyardSwitch"
+    type: "Kasa"
+    model: "EP40"
+    sample_period: 10
+    address: "192.168.50.173"
   
