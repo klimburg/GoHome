@@ -21,6 +21,11 @@ sensors:
     model: "KP125M"
     sample_period: 10
     address: "192.168.50.202"
+  - name: "EmmaSmartPlug"
+    type: "Kasa"
+    model: "KP125M"
+    sample_period: 10
+    address: "192.168.50.240"
   - name: "PlayroomSwitch"
     type: "Kasa"
     model: "HS220"
