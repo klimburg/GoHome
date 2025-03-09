@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import kasa
 import yaml
@@ -28,11 +28,19 @@ from sift_py.ingestion.flow import Flow, FlowConfig
 from sift_py.ingestion.service import IngestionService
 
 # Import sensor classes
-from bluetooth_sensors.sensors import gvh5100, wave_plus
+from bluetooth_sensors.sensors import gvh5100, tesla_wall_connector, wave_plus
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
 
 # Import Kasa sensor class
 from bluetooth_sensors.sensors.kasa import KasaSensor, setup_kasa_telemetry
+
+# Import task classes
+from bluetooth_sensors.tasks import (
+    BaseTask,
+    KasaSensorTask,
+    SensorTask,
+    TeslaWallConnectorTask,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -60,6 +68,7 @@ CONFIG_KEY = "limburg-home-config-v1"
 SENSOR_TYPES = {
     "WavePlus": wave_plus.WavePlus,
     "GVH5100": gvh5100.GVH5100,
+    "TeslaWallConnector": tesla_wall_connector.TeslaWallConnector,
 }
 
 # Map of sensor types to their channel definitions
@@ -72,306 +81,6 @@ SENSOR_CHANNELS = {
 BT_MUTEX = asyncio.Lock()
 
 MAIN_PROC_UPDATE_INTERVAL = 10
-
-
-class BaseTask:
-    """Base class for all sensor tasks."""
-
-    task: Optional[asyncio.Task] = None
-
-    async def run(self) -> None:
-        """Run the task."""
-        pass
-
-    def start(self) -> None:
-        """Start the task."""
-        pass
-
-    def stop(self) -> None:
-        """Stop the task."""
-        pass
-
-
-class SensorTask(BaseTask):
-    """Task for reading from a sensor at a specified interval."""
-
-    def __init__(
-        self,
-        sensor_name: str,
-        sensor_instance: BluetoothSensor,
-        ingestion_service: IngestionService,
-        flow_config: FlowConfig,
-        sample_period: int = 60,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
-        """Initialize the sensor task.
-
-        Args:
-            sensor_name: Name of the sensor
-            sensor_instance: Instance of a BluetoothSensor
-            ingestion_service: The Sift ingestion service
-            flow_config: Flow configuration for this sensor
-            sample_period: Time in seconds between readings
-            logger: Optional logger instance
-        """
-        self.sensor_name = sensor_name
-        self.sensor_instance = sensor_instance
-        self.ingestion_service = ingestion_service
-        self.flow_config = flow_config
-        self.sample_period = sample_period
-        self.logger = logger or logging.getLogger(__name__)
-        self.running = False
-
-    async def read_sensor_data(self) -> Dict[str, Any]:
-        """Read data from the sensor with mutex protection."""
-        # Use global mutex to ensure only one Bluetooth operation at a time
-        async with BT_MUTEX:
-            try:
-                # Connect to sensor
-                connected = await self.sensor_instance.connect(retries=3)
-                if not connected:
-                    self.logger.error(f"Failed to connect to sensor {self.sensor_name}")
-                    return {}
-
-                # Read data
-                success = await self.sensor_instance.read()
-
-                # Get sensor data
-                if success:
-                    # Use the common get_channel_data method and extract just the values
-                    channel_data = self.sensor_instance.get_channel_data()
-                    data = {name: info["value"] for name, info in channel_data.items()}
-                    return data
-                else:
-                    self.logger.warning(
-                        f"Failed to read from sensor {self.sensor_name}"
-                    )
-                    return {}
-
-            except Exception as e:
-                self.logger.exception(f"Error reading sensor data: {e}")
-                return {}
-            finally:
-                # Disconnect from sensor
-                await self.sensor_instance.disconnect()
-
-    async def send_data_to_sift(self, data: Dict[str, Any]) -> None:
-        """Send sensor data to Sift.
-
-        Args:
-            data: Dictionary with channel names as keys and values as values
-        """
-        if not data:
-            return
-
-        self.logger.info(f"Got data from {self.sensor_name}: {data}")
-
-        channel_values = []
-
-        for channel_config in self.flow_config.channels:
-            channel_name = channel_config.name
-            value = data.get(channel_name)
-            self.logger.debug(
-                f"Channel {channel_name}: value={value}, type={type(value)}"
-            )
-
-            if value is None:
-                self.logger.warning(f"No value for channel {channel_name}")
-                continue
-
-            channel_values.append(
-                ChannelValue(
-                    channel_name=channel_name,
-                    value=channel_config.try_value_from(value),
-                )
-            )
-
-        # Ingest data
-        if channel_values:
-            self.logger.debug(f"Ingesting channel values: {channel_values}")
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=self.flow_config.name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=channel_values,
-                )
-            )
-            self.logger.info(
-                f"Data sent to Sift for {self.sensor_name} with flow {self.flow_config.name}"
-            )
-
-    async def run(self) -> None:
-        """Run the sensor reading task."""
-        self.running = True
-        self.logger.info(
-            f"Starting sensor task for {self.sensor_name} with period {self.sample_period}s"
-        )
-
-        while self.running:
-            try:
-                # Read sensor data
-                data = await self.read_sensor_data()
-
-                # Send data to Sift
-                await self.send_data_to_sift(data)
-
-            except asyncio.CancelledError:
-                self.logger.info(f"Sensor task for {self.sensor_name} cancelled")
-                self.running = False
-                break
-            except Exception as e:
-                self.logger.exception(
-                    f"Error in sensor task for {self.sensor_name}: {e}"
-                )
-
-            # Wait for next reading
-            self.logger.debug(f"Waiting {self.sample_period}s for next reading")
-            await asyncio.sleep(self.sample_period)
-
-    def start(self) -> None:
-        """Start the sensor task."""
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self.run())
-
-    def stop(self) -> None:
-        """Stop the sensor task."""
-        self.running = False
-        if self.task and not self.task.done():
-            self.task.cancel()
-
-
-class KasaSensorTask(BaseTask):
-    """Task for reading from a Kasa device at a specified interval."""
-
-    def __init__(
-        self,
-        kasa_sensor: KasaSensor,
-        ingestion_service: IngestionService,
-        flow_config: FlowConfig,
-        logger: Optional[logging.Logger] = None,
-    ) -> None:
-        """Initialize the Kasa sensor task.
-
-        Args:
-            kasa_sensor: KasaSensor instance
-            ingestion_service: The Sift ingestion service
-            flow_config: Flow configuration for this sensor
-            logger: Optional logger instance
-        """
-        self.kasa_sensor = kasa_sensor
-        self.name = kasa_sensor.name
-        self.sample_period = kasa_sensor.sample_period
-        self.ingestion_service = ingestion_service
-        self.flow_config = flow_config
-        self.logger = logger or logging.getLogger(__name__)
-        self.running = False
-
-    async def read_sensor_data(self) -> Dict[str, Any]:
-        """Read data from the Kasa device.
-
-        Returns:
-            Dictionary with channel names as keys and values as values
-        """
-        try:
-            # Get channel data from Kasa device
-            channel_data = await self.kasa_sensor.get_channel_data()
-
-            # Extract just the values
-            data = {name: info["value"] for name, info in channel_data.items()}
-            return data
-
-        except Exception as e:
-            self.logger.exception(f"Error reading Kasa device data: {e}")
-            return {}
-
-    async def send_data_to_sift(self, data: Dict[str, Any]) -> None:
-        """Send Kasa device data to Sift.
-
-        Args:
-            data: Dictionary with channel names as keys and values as values
-        """
-        if not data:
-            return
-
-        self.logger.info(f"Got data from {self.name}: {data}")
-
-        channel_values = []
-
-        for channel_config in self.flow_config.channels:
-            channel_name = channel_config.name
-            value = data.get(channel_name)
-            self.logger.debug(
-                f"Channel {channel_name}: value={value}, type={type(value)}"
-            )
-
-            if value is None:
-                self.logger.warning(f"No value for channel {channel_name}")
-                continue
-
-            channel_values.append(
-                ChannelValue(
-                    channel_name=channel_name,
-                    value=channel_config.try_value_from(value),
-                )
-            )
-
-        # Ingest data
-        if channel_values:
-            self.logger.debug(f"Ingesting channel values: {channel_values}")
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=self.flow_config.name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=channel_values,
-                )
-            )
-            self.logger.info(
-                f"Data sent to Sift for {self.name} with flow {self.flow_config.name}"
-            )
-
-    async def run(self) -> None:
-        """Run the Kasa sensor reading task."""
-        self.running = True
-        self.logger.info(
-            f"Starting Kasa sensor task for {self.name} with period {self.sample_period}s"
-        )
-
-        # Ensure connection to the device
-        connected = await self.kasa_sensor.connect()
-        if not connected:
-            self.logger.error(f"Failed to connect to Kasa device {self.name}")
-            self.running = False
-            return
-
-        while self.running:
-            try:
-                # Read sensor data
-                data = await self.read_sensor_data()
-
-                # Send data to Sift
-                await self.send_data_to_sift(data)
-
-            except asyncio.CancelledError:
-                self.logger.info(f"Kasa sensor task for {self.name} cancelled")
-                self.running = False
-                break
-            except Exception as e:
-                self.logger.exception(f"Error in Kasa sensor task for {self.name}: {e}")
-
-            # Wait for next reading
-            self.logger.debug(f"Waiting {self.sample_period}s for next reading")
-            await asyncio.sleep(self.sample_period)
-
-    def start(self) -> None:
-        """Start the Kasa sensor task."""
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self.run())
-
-    def stop(self) -> None:
-        """Stop the Kasa sensor task."""
-        self.running = False
-        if self.task and not self.task.done():
-            self.task.cancel()
 
 
 class SiftLogHandler(logging.Handler):
@@ -520,35 +229,111 @@ async def build_telemetry_config(
             logger.warning(f"Unknown sensor type: {sensor_type}")
             continue
 
-        # Skip sensor types without channel definitions
-        if sensor_type not in SENSOR_CHANNELS:
+        # Handle Tesla Wall Connector differently - it dynamically discovers channels
+        if sensor_type == "TeslaWallConnector":
+            # Create an instance so we can query capabilities
+            address = sensor_config.get("address")
+            if not address:
+                logger.error(f"No address for Tesla Wall Connector {sensor_name}")
+                continue
+
+            # Create the sensor instance
+            sensor_instance = tesla_wall_connector.TeslaWallConnector(
+                serial_number="",  # Not important for this device
+                name=sensor_name,
+                address=address,
+                logger=logger,
+            )
+
+            # Connect and read data to discover channels
+            try:
+                await sensor_instance.connect()
+                success = await sensor_instance.read()
+                if not success:
+                    logger.error(
+                        f"Failed to read data from Tesla Wall Connector {sensor_name}"
+                    )
+                    await sensor_instance.disconnect()
+                    continue
+
+                # Get discovered channels
+                discovered_channels = sensor_instance.get_discovered_channels()
+                await sensor_instance.disconnect()
+
+                # Create a flow for each endpoint (vitals, lifetime, wifi)
+                for endpoint, channel_list in discovered_channels.items():
+                    if not channel_list:
+                        logger.warning(
+                            f"No channels discovered for {sensor_name} {endpoint}"
+                        )
+                        continue
+
+                    # Create channels for this endpoint
+                    channels = []
+                    for channel in channel_list:
+                        name = channel["name"]
+                        unit = channel["unit"]
+                        channels.append(
+                            ChannelConfig(
+                                name=f"{sensor_name}.{endpoint}.{name}",
+                                data_type=channel["sift_type"],
+                                unit=unit,
+                            )
+                        )
+
+                    # Create a unique flow name for this endpoint
+                    flow_name = f"{sensor_name}-{endpoint}-{int(time.time())}"
+                    flow_config = FlowConfig(name=flow_name, channels=channels)
+
+                    # Add flow for this endpoint
+                    flows.append(flow_config)
+
+                    # Add to mapping - use endpoint as part of key
+                    sensor_to_flow_map[f"{sensor_name}.{endpoint}"] = flow_config
+
+                    logger.info(
+                        f"Created flow {flow_name} with {len(channels)} channels for {sensor_name} {endpoint}"
+                    )
+            except Exception as e:
+                logger.exception(
+                    f"Error discovering Tesla Wall Connector channels: {e}"
+                )
+                continue
+
+        # Handle regular sensors
+        elif sensor_type in SENSOR_CHANNELS:
+            # Regular handling for standard sensors (non-dictionary channel structure)
+            channels = []
+
+            # We need to check if the CHANNELS is a list or a dict
+            channel_data = SENSOR_CHANNELS[sensor_type]
+
+            if isinstance(channel_data, list):
+                # Standard format where CHANNELS is a list of channel dicts
+                for channel in channel_data:
+                    name = channel["name"]  # type: ignore
+                    unit = channel["unit"]  # type: ignore
+                    channels.append(
+                        ChannelConfig(
+                            name=f"{sensor_name}.{name}",
+                            data_type=channel["sift_type"],  # type: ignore
+                            unit=unit,
+                        )
+                    )
+
+                # Create a unique flow name and store it in the mapping
+                flow_name = f"{sensor_name}-readings-{int(time.time())}"
+                flow_config = FlowConfig(name=flow_name, channels=channels)
+
+                # Add flow for this sensor
+                flows.append(flow_config)
+                sensor_to_flow_map[sensor_name] = flow_config
+            else:
+                logger.warning(f"Unsupported channel format for {sensor_type}")
+                continue
+        else:
             logger.warning(f"No channel definitions for sensor type: {sensor_type}")
             continue
-
-        # Get available channels from the mapping
-        channels = []
-        for channel in SENSOR_CHANNELS[sensor_type]:
-            name = channel["name"]
-            unit = channel["unit"]
-            channels.append(
-                ChannelConfig(
-                    name=f"{sensor_name}.{name}",
-                    data_type=channel["sift_type"],
-                    unit=unit,
-                )
-            )
-        for channel_config in channels:
-            logger.debug(
-                f"Channel Config: {channel_config.name}, {channel_config.data_type}, {channel_config.unit}"
-            )
-
-        # Create a unique flow name and store it in the mapping
-        flow_name = f"{sensor_name}-readings-{int(time.time())}"
-        flow_config = FlowConfig(name=flow_name, channels=channels)
-
-        # Add flow for this sensor
-        flows.append(flow_config)
-        sensor_to_flow_map[sensor_name] = flow_config
 
     # Add Kasa flows if provided
     if kasa_flow_configs:
@@ -658,7 +443,9 @@ async def setup_sift_connection() -> Tuple[
 
 def create_sensor_instances(
     sensors_config: List[Dict[str, Any]],
-) -> List[Tuple[str, BluetoothSensor, int]]:
+) -> List[
+    Tuple[str, Union[BluetoothSensor, tesla_wall_connector.TeslaWallConnector], int]
+]:
     """Create sensor instances from configuration.
 
     Args:
@@ -677,12 +464,25 @@ def create_sensor_instances(
 
         if sensor_type in SENSOR_TYPES:
             sensor_class = SENSOR_TYPES[sensor_type]
-            sensor_instance = sensor_class(
-                sensor_config["serial_number"],
-                name=sensor_config["name"],
-                address=sensor_config.get("address", None),
-                logger=logger,
-            )
+
+            # Handle Tesla Wall Connector differently - it doesn't use serial_number in the same way
+            if sensor_type == "TeslaWallConnector":
+                serial_number = sensor_config.get("serial_number", "")
+                sensor_instance = sensor_class(
+                    serial_number=serial_number,
+                    name=sensor_config["name"],
+                    address=sensor_config.get("address", None),
+                    logger=logger,
+                )
+            else:
+                # Regular handling for other sensor types
+                sensor_instance = sensor_class(
+                    sensor_config["serial_number"],
+                    name=sensor_config["name"],
+                    address=sensor_config.get("address", None),
+                    logger=logger,
+                )
+
             sample_period = sensor_config.get("sample_period", 60)
             sensor_instances.append(
                 (sensor_config["name"], sensor_instance, sample_period)
@@ -756,26 +556,70 @@ async def main() -> None:
             sensor_tuples = create_sensor_instances(sensors_config)
 
             if not sensor_tuples:
-                logger.warning("No valid BLE sensor instances created")
+                logger.warning("No valid sensor instances created")
             else:
                 # Create and start sensor tasks
                 for sensor_name, sensor_instance, sample_period in sensor_tuples:
-                    flow_config = sensor_to_flow_map.get(sensor_name)
-                    if flow_config is None:
-                        logger.error(f"No flow mapping for sensor {sensor_name}")
-                        continue
+                    # Handle Tesla Wall Connector differently
+                    if isinstance(
+                        sensor_instance, tesla_wall_connector.TeslaWallConnector
+                    ):
+                        # Get the flow configs for each endpoint (vitals, lifetime, wifi)
+                        tesla_flow_configs = {
+                            f"{sensor_name}.vitals": sensor_to_flow_map.get(
+                                f"{sensor_name}.vitals"
+                            ),
+                            f"{sensor_name}.lifetime": sensor_to_flow_map.get(
+                                f"{sensor_name}.lifetime"
+                            ),
+                            f"{sensor_name}.wifi": sensor_to_flow_map.get(
+                                f"{sensor_name}.wifi"
+                            ),
+                        }
 
-                    sensor_task: SensorTask = SensorTask(
-                        sensor_name=sensor_name,
-                        sensor_instance=sensor_instance,
-                        ingestion_service=ingestion_service,
-                        flow_config=flow_config,
-                        sample_period=sample_period,
-                        logger=logger,
-                    )
-                    sensor_task.start()
-                    all_tasks.append(sensor_task)  # type: ignore
-                    logger.info(f"Started task for BLE sensor {sensor_name}")
+                        # Check if we have all needed flow configs
+                        missing_configs = [
+                            k for k, v in tesla_flow_configs.items() if v is None
+                        ]
+                        if missing_configs:
+                            logger.error(
+                                f"Missing flow configs for Tesla Wall Connector {sensor_name}: {missing_configs}"
+                            )
+                            continue
+
+                        # Create Tesla Wall Connector task
+                        tesla_task: TeslaWallConnectorTask = TeslaWallConnectorTask(
+                            sensor_name=sensor_name,
+                            sensor_instance=sensor_instance,
+                            ingestion_service=ingestion_service,
+                            flow_configs=tesla_flow_configs,  # type: ignore
+                            sample_period=sample_period,
+                            logger=logger,
+                        )
+                        tesla_task.start()
+                        all_tasks.append(tesla_task)  # type: ignore
+                        logger.info(
+                            f"Started task for Tesla Wall Connector {sensor_name}"
+                        )
+                    else:
+                        # Regular handling for BLE sensors
+                        flow_config = sensor_to_flow_map.get(sensor_name)
+                        if flow_config is None:
+                            logger.error(f"No flow mapping for sensor {sensor_name}")
+                            continue
+
+                        sensor_task: SensorTask = SensorTask(
+                            sensor_name=sensor_name,
+                            sensor_instance=sensor_instance,  # type: ignore
+                            ingestion_service=ingestion_service,
+                            flow_config=flow_config,
+                            sample_period=sample_period,
+                            logger=logger,
+                            bt_mutex=BT_MUTEX,  # Pass the mutex
+                        )
+                        sensor_task.start()
+                        all_tasks.append(sensor_task)  # type: ignore
+                        logger.info(f"Started task for BLE sensor {sensor_name}")
         else:
             logger.info("Skipping BLE sensor data collection")
 

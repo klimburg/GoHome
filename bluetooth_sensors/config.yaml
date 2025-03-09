@@ -66,4 +66,7 @@ sensors:
     model: "EP40"
     sample_period: 10
     address: "192.168.50.173"
-  
+  - name: "TeslaWallConnector"
+    type: "TeslaWallConnector"
+    sample_period: 10
+    address: "192.168.50.108"

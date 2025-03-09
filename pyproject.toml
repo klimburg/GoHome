@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv",
     "sift-stack-py",
     "python-kasa",
+    "aiohttp",
 ]
 
 [project.optional-dependencies]
