@@ -37,6 +37,7 @@ from bluetooth_sensors.sensors.kasa import KasaSensor, setup_kasa_telemetry
 # Import task classes
 from bluetooth_sensors.tasks import (
     BaseTask,
+    FlowIngestionTask,
     KasaSensorTask,
     SensorTask,
     TeslaWallConnectorTask,
@@ -80,6 +81,9 @@ SENSOR_CHANNELS = {
 # Global mutex for Bluetooth operations
 BT_MUTEX = asyncio.Lock()
 
+# Global queue for flow data
+FLOW_QUEUE: asyncio.Queue[Flow] = asyncio.Queue()
+
 MAIN_PROC_UPDATE_INTERVAL = 10
 
 
@@ -87,42 +91,53 @@ class SiftLogHandler(logging.Handler):
     """A logging handler that sends log messages to Sift."""
 
     def __init__(
-        self, ingestion_service: IngestionService, flow_name: str, channel_name: str
+        self, flow_queue: asyncio.Queue[Flow], flow_name: str, channel_name: str
     ) -> None:
         """Initialize the SiftLogHandler.
 
         Args:
-            ingestion_service: The Sift ingestion service
+            flow_queue: The queue to put log flow data into
             flow_name: The flow name to use for log messages
             channel_name: The channel name to use for log messages
         """
         super().__init__()
-        self.ingestion_service = ingestion_service
+        self.flow_queue = flow_queue
         self.flow_name = flow_name
         self.channel_name = channel_name
         self.setLevel(logging.INFO)
         self.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Send the log record to Sift.
+        """Send the log record to the flow queue.
 
         Args:
             record: The log record to send
         """
         try:
             msg = self.format(record)
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=self.flow_name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=[
-                        ChannelValue(
-                            channel_name=self.channel_name,
-                            value=string_value(msg),
-                        )
-                    ],
-                )
+
+            # Create a flow
+            flow = Flow(
+                flow_name=self.flow_name,
+                timestamp=datetime.now(timezone.utc),
+                channel_values=[
+                    ChannelValue(
+                        channel_name=self.channel_name,
+                        value=string_value(msg),
+                    )
+                ],
             )
+
+            # Use put_nowait instead of creating a task
+            try:
+                # This is non-blocking and doesn't require await
+                self.flow_queue.put_nowait(flow)
+            except asyncio.QueueFull:
+                # Handle queue full scenario - log to stderr or similar
+                # This will only happen if we set a maxsize on the queue
+                import sys
+
+                print(f"Queue full, dropping log message: {msg}", file=sys.stderr)
         except Exception:
             self.handleError(record)
 
@@ -165,36 +180,39 @@ async def create_main_process_flow(asset_name: str) -> FlowConfig:
 
 
 async def update_main_proc_telem(
-    ingestion_service: IngestionService,
+    flow_queue: asyncio.Queue[Flow],
     flow_name: str,
     tasks: List[BaseTask],
     start_time: float,
 ) -> None:
-    """Update the task count in Sift.
+    """Update the task count in the flow queue.
 
     Args:
-        ingestion_service: The Sift ingestion service
+        flow_queue: Queue to put flow data into
         flow_name: The flow name
         tasks: The list of tasks
+        start_time: The start time of the process
     """
     active_count = sum(1 for task in tasks if task.task and not task.task.done())
 
-    ingestion_service.try_ingest_flows(
-        Flow(
-            flow_name=flow_name,
-            timestamp=datetime.now(timezone.utc),
-            channel_values=[
-                ChannelValue(
-                    channel_name="active_tasks",
-                    value=int32_value(active_count),
-                ),
-                ChannelValue(
-                    channel_name="uptime",
-                    value=double_value(time.time() - start_time),
-                ),
-            ],
-        )
+    # Create flow for main process telemetry
+    flow = Flow(
+        flow_name=flow_name,
+        timestamp=datetime.now(timezone.utc),
+        channel_values=[
+            ChannelValue(
+                channel_name="active_tasks",
+                value=int32_value(active_count),
+            ),
+            ChannelValue(
+                channel_name="uptime",
+                value=double_value(time.time() - start_time),
+            ),
+        ],
     )
+
+    # Put flow on queue
+    await flow_queue.put(flow)
 
 
 async def build_telemetry_config(
@@ -530,9 +548,9 @@ async def main() -> None:
             main_flow_name,  # Get the main flow name
         ) = await setup_sift_connection()
 
-        # Add Sift log handler
+        # Add Sift log handler that uses flow queue
         sift_log_handler = SiftLogHandler(
-            ingestion_service=ingestion_service,
+            flow_queue=FLOW_QUEUE,
             flow_name=main_flow_name,
             channel_name="log_message",
         )
@@ -541,8 +559,17 @@ async def main() -> None:
 
         logger.info("Main process flow created and log handler added")
 
+        # Create the flow ingestion task that will consume from the queue
+        flow_ingestion_task = FlowIngestionTask(
+            flow_queue=FLOW_QUEUE,
+            ingestion_services=[ingestion_service],
+            logger=logger,
+        )
+        flow_ingestion_task.start()
+        logger.info("Started flow ingestion task")
+
         # Track all tasks
-        all_tasks: List[BaseTask] = []
+        all_tasks: List[BaseTask] = [flow_ingestion_task]  # Add the ingestion task
 
         # Create and start BLE sensor tasks
         # Create sensor instances
@@ -557,14 +584,16 @@ async def main() -> None:
                 if isinstance(sensor_instance, tesla_wall_connector.TeslaWallConnector):
                     # Get the flow configs for each endpoint (vitals, lifetime, wifi)
                     tesla_flow_configs = {
-                        flow_name: flow_map for flow_name, flow_map in sensor_to_flow_map.items() 
+                        flow_name: flow_map
+                        for flow_name, flow_map in sensor_to_flow_map.items()
                         if flow_name.startswith(f"{sensor_name}.")
                     }
+
                     # Create Tesla Wall Connector task
                     tesla_task: TeslaWallConnectorTask = TeslaWallConnectorTask(
                         sensor_name=sensor_name,
                         sensor_instance=sensor_instance,
-                        ingestion_service=ingestion_service,
+                        flow_queue=FLOW_QUEUE,
                         flow_configs=tesla_flow_configs,  # type: ignore
                         sample_period=sample_period,
                         logger=logger,
@@ -582,7 +611,7 @@ async def main() -> None:
                     sensor_task: SensorTask = SensorTask(
                         sensor_name=sensor_name,
                         sensor_instance=sensor_instance,  # type: ignore
-                        ingestion_service=ingestion_service,
+                        flow_queue=FLOW_QUEUE,
                         flow_config=flow_config,
                         sample_period=sample_period,
                         logger=logger,
@@ -602,7 +631,7 @@ async def main() -> None:
 
                 kasa_task: KasaSensorTask = KasaSensorTask(
                     kasa_sensor=kasa_sensor,
-                    ingestion_service=ingestion_service,
+                    flow_queue=FLOW_QUEUE,
                     flow_config=flow_config,
                     logger=logger,
                 )
@@ -612,14 +641,12 @@ async def main() -> None:
         else:
             logger.warning("No Kasa devices found")
 
-        if not all_tasks:
+        if len(all_tasks) <= 1:  # Only the flow ingestion task
             logger.error("No sensor tasks created, nothing to do")
             return
 
         # Send initial task count
-        await update_main_proc_telem(
-            ingestion_service, main_flow_name, all_tasks, start_time
-        )
+        await update_main_proc_telem(FLOW_QUEUE, main_flow_name, all_tasks, start_time)
         logger.info(f"Initial task count: {len(all_tasks)}")
 
         # Main loop - just wait for keyboard interrupt
@@ -633,7 +660,7 @@ async def main() -> None:
                 current_time = time.time()
                 if current_time - last_task_count_update >= MAIN_PROC_UPDATE_INTERVAL:
                     await update_main_proc_telem(
-                        ingestion_service, main_flow_name, all_tasks, start_time
+                        FLOW_QUEUE, main_flow_name, all_tasks, start_time
                     )
                     last_task_count_update = current_time
                     logger.debug(f"Updated task count: {len(all_tasks)}")
@@ -643,7 +670,7 @@ async def main() -> None:
         finally:
             # Send final task count
             await update_main_proc_telem(
-                ingestion_service, main_flow_name, all_tasks, start_time
+                FLOW_QUEUE, main_flow_name, all_tasks, start_time
             )
             logger.info("Shutting down tasks")
 
@@ -656,6 +683,11 @@ async def main() -> None:
                 *[task.task for task in all_tasks if task.task],
                 return_exceptions=True,
             )
+
+            # Wait for the flow queue to be fully processed
+            if not FLOW_QUEUE.empty():
+                logger.info(f"Waiting for {FLOW_QUEUE.qsize()} flows to be processed")
+                await FLOW_QUEUE.join()
 
     except Exception as e:
         logger.exception(f"Error in main: {e}")

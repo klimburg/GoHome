@@ -43,7 +43,7 @@ class SensorTask(BaseTask):
         self,
         sensor_name: str,
         sensor_instance: BluetoothSensor,
-        ingestion_service: IngestionService,
+        flow_queue: asyncio.Queue[Flow],
         flow_config: FlowConfig,
         sample_period: int = 60,
         logger: Optional[logging.Logger] = None,
@@ -54,7 +54,7 @@ class SensorTask(BaseTask):
         Args:
             sensor_name: Name of the sensor
             sensor_instance: Instance of a BluetoothSensor
-            ingestion_service: The Sift ingestion service
+            flow_queue: Queue to put formatted flow data into
             flow_config: Flow configuration for this sensor
             sample_period: Time in seconds between readings
             logger: Optional logger instance
@@ -62,7 +62,7 @@ class SensorTask(BaseTask):
         """
         self.sensor_name = sensor_name
         self.sensor_instance = sensor_instance
-        self.ingestion_service = ingestion_service
+        self.flow_queue = flow_queue
         self.flow_config = flow_config
         self.sample_period = sample_period
         self.logger = logger or logging.getLogger(__name__)
@@ -90,7 +90,9 @@ class SensorTask(BaseTask):
                     data = {name: info["value"] for name, info in channel_data.items()}
                     return data
                 else:
-                    self.logger.warning(f"Failed to read from sensor {self.sensor_name}")
+                    self.logger.warning(
+                        f"Failed to read from sensor {self.sensor_name}"
+                    )
                     return {}
 
             except Exception as e:
@@ -100,8 +102,8 @@ class SensorTask(BaseTask):
                 # Disconnect from sensor
                 await self.sensor_instance.disconnect()
 
-    async def send_data_to_sift(self, data: Dict[str, Any]) -> None:
-        """Send sensor data to Sift.
+    async def add_data_to_flow_queue(self, data: Dict[str, Any]) -> None:
+        """Format sensor data as a Flow and add to the flow queue.
 
         Args:
             data: Dictionary with channel names as keys and values as values
@@ -131,18 +133,17 @@ class SensorTask(BaseTask):
                 )
             )
 
-        # Ingest data
+        # Create flow and add to queue
         if channel_values:
-            self.logger.debug(f"Ingesting channel values: {channel_values}")
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=self.flow_config.name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=channel_values,
-                )
+            flow = Flow(
+                flow_name=self.flow_config.name,
+                timestamp=datetime.now(timezone.utc),
+                channel_values=channel_values,
             )
-            self.logger.info(
-                f"Data sent to Sift for {self.sensor_name} with flow {self.flow_config.name}"
+
+            await self.flow_queue.put(flow)
+            self.logger.debug(
+                f"Flow data queued for {self.sensor_name} with flow {self.flow_config.name}"
             )
 
     async def run(self) -> None:
@@ -157,8 +158,8 @@ class SensorTask(BaseTask):
                 # Read sensor data
                 data = await self.read_sensor_data()
 
-                # Send data to Sift
-                await self.send_data_to_sift(data)
+                # Format and queue data
+                await self.add_data_to_flow_queue(data)
 
             except asyncio.CancelledError:
                 self.logger.info(f"Sensor task for {self.sensor_name} cancelled")
@@ -191,7 +192,7 @@ class KasaSensorTask(BaseTask):
     def __init__(
         self,
         kasa_sensor: KasaSensor,
-        ingestion_service: IngestionService,
+        flow_queue: asyncio.Queue[Flow],
         flow_config: FlowConfig,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -199,14 +200,14 @@ class KasaSensorTask(BaseTask):
 
         Args:
             kasa_sensor: KasaSensor instance
-            ingestion_service: The Sift ingestion service
+            flow_queue: Queue to put formatted flow data into
             flow_config: Flow configuration for this sensor
             logger: Optional logger instance
         """
         self.kasa_sensor = kasa_sensor
         self.name = kasa_sensor.name
         self.sample_period = kasa_sensor.sample_period
-        self.ingestion_service = ingestion_service
+        self.flow_queue = flow_queue
         self.flow_config = flow_config
         self.logger = logger or logging.getLogger(__name__)
         self.running = False
@@ -229,8 +230,8 @@ class KasaSensorTask(BaseTask):
             self.logger.exception(f"Error reading Kasa device data: {e}")
             return {}
 
-    async def send_data_to_sift(self, data: Dict[str, Any]) -> None:
-        """Send Kasa device data to Sift.
+    async def add_data_to_flow_queue(self, data: Dict[str, Any]) -> None:
+        """Format Kasa device data as a Flow and add to the flow queue.
 
         Args:
             data: Dictionary with channel names as keys and values as values
@@ -260,18 +261,17 @@ class KasaSensorTask(BaseTask):
                 )
             )
 
-        # Ingest data
+        # Create flow and add to queue
         if channel_values:
-            self.logger.debug(f"Ingesting channel values: {channel_values}")
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=self.flow_config.name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=channel_values,
-                )
+            flow = Flow(
+                flow_name=self.flow_config.name,
+                timestamp=datetime.now(timezone.utc),
+                channel_values=channel_values,
             )
-            self.logger.info(
-                f"Data sent to Sift for {self.name} with flow {self.flow_config.name}"
+
+            await self.flow_queue.put(flow)
+            self.logger.debug(
+                f"Flow data queued for {self.name} with flow {self.flow_config.name}"
             )
 
     async def run(self) -> None:
@@ -293,8 +293,8 @@ class KasaSensorTask(BaseTask):
                 # Read sensor data
                 data = await self.read_sensor_data()
 
-                # Send data to Sift
-                await self.send_data_to_sift(data)
+                # Format and queue data
+                await self.add_data_to_flow_queue(data)
 
             except asyncio.CancelledError:
                 self.logger.info(f"Kasa sensor task for {self.name} cancelled")
@@ -326,7 +326,7 @@ class TeslaWallConnectorTask(BaseTask):
         self,
         sensor_name: str,
         sensor_instance: tesla_wall_connector.TeslaWallConnector,
-        ingestion_service: IngestionService,
+        flow_queue: asyncio.Queue[Flow],
         flow_configs: Dict[
             str, FlowConfig
         ],  # One for each endpoint (vitals, lifetime, wifi)
@@ -338,14 +338,14 @@ class TeslaWallConnectorTask(BaseTask):
         Args:
             sensor_name: Name of the sensor
             sensor_instance: Instance of a TeslaWallConnector
-            ingestion_service: The Sift ingestion service
+            flow_queue: Queue to put formatted flow data into
             flow_configs: Dictionary mapping endpoint names to their FlowConfig
             sample_period: Time in seconds between readings
             logger: Optional logger instance
         """
         self.sensor_name = sensor_name
         self.sensor_instance = sensor_instance
-        self.ingestion_service = ingestion_service
+        self.flow_queue = flow_queue
         self.flow_configs = flow_configs
         self.sample_period = sample_period
         self.logger = logger or logging.getLogger(__name__)
@@ -386,8 +386,8 @@ class TeslaWallConnectorTask(BaseTask):
             # Disconnect from sensor
             await self.sensor_instance.disconnect()
 
-    async def send_data_to_sift(self, data: Dict[str, Dict[str, Any]]) -> None:
-        """Send sensor data to Sift.
+    async def add_data_to_flow_queue(self, data: Dict[str, Dict[str, Any]]) -> None:
+        """Format sensor data as Flows and add to the flow queue.
 
         Args:
             data: Dictionary with channel names as keys and values as values
@@ -445,7 +445,7 @@ class TeslaWallConnectorTask(BaseTask):
                 )
             )
 
-        # Send data for each endpoint
+        # Create flow for each endpoint and add to queue
         for endpoint, channel_values in endpoint_data.items():
             if not channel_values:
                 continue
@@ -456,19 +456,18 @@ class TeslaWallConnectorTask(BaseTask):
                 continue
 
             self.logger.debug(
-                f"Ingesting {len(channel_values)} values for {flow_config_key}"
+                f"Creating flow with {len(channel_values)} values for {flow_config_key}"
             )
 
-            self.ingestion_service.try_ingest_flows(
-                Flow(
-                    flow_name=flow_config.name,
-                    timestamp=datetime.now(timezone.utc),
-                    channel_values=channel_values,
-                )
+            flow = Flow(
+                flow_name=flow_config.name,
+                timestamp=datetime.now(timezone.utc),
+                channel_values=channel_values,
             )
 
-            self.logger.info(
-                f"Data sent to Sift for {self.sensor_name} {endpoint} flow"
+            await self.flow_queue.put(flow)
+            self.logger.debug(
+                f"Flow data queued for {self.sensor_name} {endpoint} flow"
             )
 
     async def run(self) -> None:
@@ -483,8 +482,8 @@ class TeslaWallConnectorTask(BaseTask):
                 # Read sensor data
                 data = await self.read_sensor_data()
 
-                # Send data to Sift
-                await self.send_data_to_sift(data)
+                # Format and queue data
+                await self.add_data_to_flow_queue(data)
 
             except asyncio.CancelledError:
                 self.logger.info(
@@ -508,6 +507,68 @@ class TeslaWallConnectorTask(BaseTask):
 
     def stop(self) -> None:
         """Stop the Tesla Wall Connector task."""
+        self.running = False
+        if self.task and not self.task.done():
+            self.task.cancel()
+
+
+class FlowIngestionTask(BaseTask):
+    """Task for consuming flows from a queue and ingesting them to one or more services."""
+
+    def __init__(
+        self,
+        flow_queue: asyncio.Queue[Flow],
+        ingestion_services: List[IngestionService],
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        """Initialize the flow ingestion task.
+
+        Args:
+            flow_queue: Queue to consume Flow objects from
+            ingestion_services: List of ingestion services to send flows to
+            logger: Optional logger instance
+        """
+        self.flow_queue = flow_queue
+        self.ingestion_services = ingestion_services
+        self.logger = logger or logging.getLogger(__name__)
+        self.running = False
+
+    async def run(self) -> None:
+        """Run the flow ingestion task."""
+        self.running = True
+        self.logger.info(
+            f"Starting flow ingestion task with {len(self.ingestion_services)} services"
+        )
+
+        while self.running:
+            try:
+                # Get a flow from the queue
+                flow = await self.flow_queue.get()
+
+                # Process the flow by sending to all ingestion services
+                for service in self.ingestion_services:
+                    try:
+                        service.try_ingest_flows(flow)
+                    except Exception as e:
+                        self.logger.exception(f"Error ingesting flow to service: {e}")
+
+                # Mark task as done
+                self.flow_queue.task_done()
+
+            except asyncio.CancelledError:
+                self.logger.info("Flow ingestion task cancelled")
+                self.running = False
+                break
+            except Exception as e:
+                self.logger.exception(f"Error in flow ingestion task: {e}")
+
+    def start(self) -> None:
+        """Start the flow ingestion task."""
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.run())
+
+    def stop(self) -> None:
+        """Stop the flow ingestion task."""
         self.running = False
         if self.task and not self.task.done():
             self.task.cancel()
