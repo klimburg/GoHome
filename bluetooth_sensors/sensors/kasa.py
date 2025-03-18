@@ -93,11 +93,11 @@ class KasaSensor:
                 and self.device_instance.children
             ):
                 self.logger.info(
-                    f"Device has {len(self.device_instance.children)} children"
+                    f"{self.name} has {len(self.device_instance.children)} children"
                 )
                 for child in self.device_instance.children:
                     await child.update()
-                    self.logger.debug(f"Child device: {child.alias}")
+                    self.logger.info(f"Child device: {child.alias}")
 
             return True
         except Exception as e:

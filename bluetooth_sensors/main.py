@@ -710,8 +710,14 @@ async def main() -> None:
                     logger.debug(f"Updated task count: {len(all_tasks)}")
 
         except KeyboardInterrupt:
-            logger.info("Interrupted by user")
+            logger.info(
+                "Interrupted by user - Shutting down and removing sift log handler."
+            )
         finally:
+            # We're shutting down, remove log handlers first to prevent more logs during shutdown
+            logger.removeHandler(sift_log_handler)
+            logging.getLogger("bluetooth_sensors").removeHandler(sift_log_handler)
+
             # Send final task count
             await update_main_proc_telem(
                 FLOW_QUEUE, main_flow_name, all_tasks, start_time
@@ -722,24 +728,48 @@ async def main() -> None:
             for task in all_tasks:  # type: ignore
                 task.stop()
 
-            # Wait for all tasks to finish with correct type annotation
-            await asyncio.gather(
-                *[task.task for task in all_tasks if task.task],
-                return_exceptions=True,
-            )
+            # Give tasks a moment to process cancellation
+            await asyncio.sleep(0.5)
 
-            # Wait for the flow queue to be fully processed
+            # Wait for all tasks to finish with a timeout to prevent hanging
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        *[
+                            task.task
+                            for task in all_tasks
+                            if task.task and not task.task.done()
+                        ],
+                        return_exceptions=True,
+                    ),
+                    timeout=5.0,  # Give tasks up to 5 seconds to finish
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Some tasks did not complete within timeout - forcing shutdown"
+                )
+
+            # Wait for the flow queue to be fully processed with a timeout
             if not FLOW_QUEUE.empty():
-                logger.info(f"Waiting for {FLOW_QUEUE.qsize()} flows to be processed")
-                await FLOW_QUEUE.join()
+                queue_size = FLOW_QUEUE.qsize()
+                logger.info(f"Waiting for {queue_size} flows to be processed")
+                try:
+                    # Use timeout to prevent hanging if queue processing gets stuck
+                    await asyncio.wait_for(FLOW_QUEUE.join(), timeout=10.0)
+                    logger.info(f"Successfully processed all {queue_size} queued flows")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Queue processing timed out with approximately {FLOW_QUEUE.qsize()} items remaining"
+                    )
 
     except Exception as e:
         logger.exception(f"Error in main: {e}")
     finally:
-        # Remove the Sift log handler to avoid errors during shutdown
-        if "sift_log_handler" in locals():
+        # Only remove log handlers if they haven't been removed yet
+        if "sift_log_handler" in locals() and sift_log_handler in logger.handlers:
             logger.removeHandler(sift_log_handler)
-            logging.getLogger("bluetooth_sensors").removeHandler(sift_log_handler)
+            if sift_log_handler in logging.getLogger("bluetooth_sensors").handlers:
+                logging.getLogger("bluetooth_sensors").removeHandler(sift_log_handler)
 
         # Clean up the channels
         if "grpc_channels" in locals():

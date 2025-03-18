@@ -111,7 +111,7 @@ class SensorTask(BaseTask):
         if not data:
             return
 
-        self.logger.info(f"Got data from {self.sensor_name}: {data}")
+        self.logger.debug(f"Got data from {self.sensor_name}: {data}")
 
         channel_values = []
 
@@ -239,7 +239,7 @@ class KasaSensorTask(BaseTask):
         if not data:
             return
 
-        self.logger.info(f"Got data from {self.name}: {data}")
+        self.logger.debug(f"Got data from {self.name}: {data}")
 
         channel_values = []
 
@@ -395,7 +395,7 @@ class TeslaWallConnectorTask(BaseTask):
         if not data:
             return
 
-        self.logger.info(f"Got data from {self.sensor_name}: {len(data)} channels")
+        self.logger.debug(f"Got data from {self.sensor_name}: {len(data)} channels")
         self.logger.debug(f"Data: {data}")
 
         # Group data by endpoint (vitals, lifetime, wifi)
