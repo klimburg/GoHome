@@ -96,10 +96,11 @@ class TeslaWallConnector:
     async def disconnect(self) -> None:
         """Disconnect from the Tesla Wall Connector."""
         if self.session:
+            self.logger.info("Closing aiohttp session for Tesla Wall Connector")
             await self.session.close()
             self.session = None
         self.connected = False
-        self.logger.debug("Disconnected from Tesla Wall Connector")
+        self.logger.info("Disconnected from Tesla Wall Connector")
 
     async def read(self) -> bool:
         """Read data from all Tesla Wall Connector endpoints.

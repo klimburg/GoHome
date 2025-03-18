@@ -724,29 +724,41 @@ async def main() -> None:
             )
             logger.info("Shutting down tasks")
 
+            # First, stop all sensor tasks but NOT the flow ingestion task
+            sensor_tasks = [
+                task for task in all_tasks if not isinstance(task, FlowIngestionTask)
+            ]
+            flow_ingestion_tasks = [
+                task for task in all_tasks if isinstance(task, FlowIngestionTask)
+            ]
+
+            if not flow_ingestion_tasks:
+                logger.warning("No flow ingestion task found")
+
             # Stop all sensor tasks
-            for task in all_tasks:  # type: ignore
+            for task in sensor_tasks:
                 task.stop()
 
             # Give tasks a moment to process cancellation
             await asyncio.sleep(0.5)
 
-            # Wait for all tasks to finish with a timeout to prevent hanging
+            # Wait for all sensor tasks to finish with a timeout to prevent hanging
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(
-                        *[
-                            task.task
-                            for task in all_tasks
-                            if task.task and not task.task.done()
-                        ],
-                        return_exceptions=True,
-                    ),
-                    timeout=5.0,  # Give tasks up to 5 seconds to finish
-                )
+                if sensor_tasks:
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *[
+                                task.task
+                                for task in sensor_tasks
+                                if task.task and not task.task.done()
+                            ],
+                            return_exceptions=True,
+                        ),
+                        timeout=5.0,  # Give tasks up to 5 seconds to finish
+                    )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Some tasks did not complete within timeout - forcing shutdown"
+                    "Some sensor tasks did not complete within timeout - forcing shutdown"
                 )
 
             # Wait for the flow queue to be fully processed with a timeout
@@ -761,6 +773,30 @@ async def main() -> None:
                     logger.warning(
                         f"Queue processing timed out with approximately {FLOW_QUEUE.qsize()} items remaining"
                     )
+
+            # Now that we've processed the queue (or timed out), stop the flow ingestion task
+            for task in flow_ingestion_tasks:
+                logger.info("Stopping flow ingestion task")
+                task.stop()
+
+            # Wait for flow ingestion tasks to complete
+            try:
+                if flow_ingestion_tasks:
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *[
+                                task.task
+                                for task in flow_ingestion_tasks
+                                if task.task and not task.task.done()
+                            ],
+                            return_exceptions=True,
+                        ),
+                        timeout=3.0,  # Give tasks up to 3 seconds to finish
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Flow ingestion task did not complete within timeout - forcing shutdown"
+                )
 
     except Exception as e:
         logger.exception(f"Error in main: {e}")
