@@ -70,3 +70,20 @@ sensors:
     type: "TeslaWallConnector"
     sample_period: 10
     address: "192.168.50.108"
+sift_environments:
+  - name: gov
+    enabled: true
+    base_uri: "https://gov.grpc-api.siftstack.com"
+    use_ssl: true
+  - name: dev
+    enabled: true
+    base_uri: "https://grpc-api.development.siftstack.com"
+    use_ssl: true
+  - name: prod
+    enabled: true
+    base_uri: "https://grpc-api.siftstack.com"
+    use_ssl: true
+  - name: local
+    enabled: false
+    base_uri: "localhost:50051"
+    use_ssl: false

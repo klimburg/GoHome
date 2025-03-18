@@ -52,11 +52,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Get Sift credentials from environment
-SIFT_API_KEY = os.getenv("SIFT_API_KEY")
-BASE_URI = os.getenv("BASE_URI")
-USE_SSL = os.getenv("USE_SSL", "true").lower() == "true"
-
 # Get Kasa credentials from environment
 KASA_USERNAME = os.getenv("KASA_USERNAME")
 KASA_PASSWORD = os.getenv("KASA_PASSWORD")
@@ -376,31 +371,25 @@ async def build_telemetry_config(
 
 
 async def setup_sift_connection() -> Tuple[
-    IngestionService,
-    SiftChannel,
+    List[IngestionService],
+    List[SiftChannel],
     List[Dict[str, Any]],
     Dict[str, FlowConfig],
     List[KasaSensor],
     str,  # Add main flow name as a return value
 ]:
-    """Set up connection to Sift.
+    """Set up connections to Sift environments.
 
     Returns:
-        Tuple of (IngestionService, grpc_channel, sensors_config, sensor_to_flow_map, kasa_sensors, main_flow_name)
+        Tuple of (
+            List[IngestionService],
+            List[SiftChannel],
+            sensors_config,
+            sensor_to_flow_map,
+            kasa_sensors,
+            main_flow_name
+        )
     """
-    if SIFT_API_KEY is None or BASE_URI is None:
-        raise ValueError("SIFT_API_KEY and BASE_URI must be set")
-
-    credentials = SiftChannelConfig(
-        apikey=SIFT_API_KEY,
-        uri=BASE_URI,
-        use_ssl=USE_SSL,
-    )
-    logger.info(f"Connecting to Sift at {BASE_URI}")
-
-    # Create the channel without using async with
-    grpc_channel = use_sift_channel(credentials)
-
     # Load config file
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     with open(config_path, "r") as f:
@@ -409,6 +398,21 @@ async def setup_sift_connection() -> Tuple[
     # Extract sensor configs
     sensors_config = config.get("sensors", [])
     logger.info(f"Found {len(sensors_config)} sensor configs in configuration file")
+
+    # Extract Sift environment configs
+    sift_environments = config.get("sift_environments", [])
+    logger.info(
+        f"Found {len(sift_environments)} Sift environments in configuration file"
+    )
+
+    # Filter to only enabled environments
+    enabled_environments = [
+        env for env in sift_environments if env.get("enabled", False)
+    ]
+    logger.info(f"Found {len(enabled_environments)} enabled Sift environments")
+
+    if not enabled_environments:
+        raise ValueError("No enabled Sift environments found in configuration")
 
     # Setup Kasa devices telemetry if credentials are available
     kasa_sensors: List[KasaSensor] = []
@@ -441,21 +445,59 @@ async def setup_sift_connection() -> Tuple[
     )
     logger.info(f"Built telemetry config with {len(telemetry_config.flows)} flows")
 
-    # Create ingestion service
-    ingestion_service = IngestionService(grpc_channel, telemetry_config)
+    # Create ingestion services for each enabled environment
+    ingestion_services = []
+    grpc_channels = []
 
-    # Create a run
-    run_name = f"{ASSET_NAME}.{datetime.now().timestamp():.0f}"
-    logger.info(f"Creating run: {run_name}")
-    ingestion_service.attach_run(grpc_channel, run_name)
+    for env in enabled_environments:
+        env_name = env["name"].upper()
+        api_key_var = f"SIFT_API_KEY_{env_name}"
+        api_key = os.getenv(api_key_var)
+
+        if not api_key:
+            logger.warning(f"No API key found for environment {env['name']}, skipping")
+            continue
+
+        base_uri = env["base_uri"]
+        use_ssl = env.get("use_ssl", True)
+
+        logger.info(f"Setting up Sift connection to {env['name']} at {base_uri}")
+
+        # Create credentials for this environment
+        credentials = SiftChannelConfig(
+            apikey=api_key,
+            uri=base_uri,
+            use_ssl=use_ssl,
+        )
+
+        try:
+            # Create the channel
+            grpc_channel = use_sift_channel(credentials)
+            grpc_channels.append(grpc_channel)
+
+            # Create ingestion service
+            ingestion_service = IngestionService(grpc_channel, telemetry_config)
+
+            # Create a run
+            run_name = f"{ASSET_NAME}.{env['name']}.{datetime.now().timestamp():.0f}"
+            logger.info(f"Creating run for {env['name']}: {run_name}")
+            ingestion_service.attach_run(grpc_channel, run_name)
+
+            ingestion_services.append(ingestion_service)
+            logger.info(f"Successfully set up Sift connection to {env['name']}")
+        except Exception as e:
+            logger.exception(f"Error setting up Sift connection to {env['name']}: {e}")
+
+    if not ingestion_services:
+        raise ValueError("Failed to set up any Sift connections")
 
     return (
-        ingestion_service,
-        grpc_channel,
+        ingestion_services,
+        grpc_channels,
         sensors_config,
         sensor_to_flow_map,
         kasa_sensors,
-        main_flow_name,  # Return the main flow name
+        main_flow_name,
     )
 
 
@@ -538,15 +580,17 @@ async def main() -> None:
         logger.debug("Debug logging enabled")
 
     try:
-        # Set up Sift connection
+        # Set up Sift connections
         (
-            ingestion_service,
-            grpc_channel,
+            ingestion_services,
+            grpc_channels,
             sensors_config,
             sensor_to_flow_map,
             kasa_sensors,
             main_flow_name,  # Get the main flow name
         ) = await setup_sift_connection()
+
+        logger.info(f"Set up {len(ingestion_services)} Sift connections")
 
         # Add Sift log handler that uses flow queue
         sift_log_handler = SiftLogHandler(
@@ -562,7 +606,7 @@ async def main() -> None:
         # Create the flow ingestion task that will consume from the queue
         flow_ingestion_task = FlowIngestionTask(
             flow_queue=FLOW_QUEUE,
-            ingestion_services=[ingestion_service],
+            ingestion_services=ingestion_services,
             logger=logger,
         )
         flow_ingestion_task.start()
@@ -697,10 +741,11 @@ async def main() -> None:
             logger.removeHandler(sift_log_handler)
             logging.getLogger("bluetooth_sensors").removeHandler(sift_log_handler)
 
-        # Clean up the channel
-        if "grpc_channel" in locals():
-            logger.info("Closing Sift connection")
-            grpc_channel.close()
+        # Clean up the channels
+        if "grpc_channels" in locals():
+            logger.info("Closing Sift connections")
+            for channel in grpc_channels:
+                channel.close()
 
         logger.info("Shutting down")
 
