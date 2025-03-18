@@ -49,7 +49,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load environment variables
-load_dotenv("../.env", override=True)
+load_dotenv()
 
 # Get Sift credentials from environment
 SIFT_API_KEY = os.getenv("SIFT_API_KEY")
@@ -503,12 +503,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose (debug) logging"
     )
-    parser.add_argument(
-        "--skip-ble", action="store_true", help="Skip BLE sensor data collection"
-    )
-    parser.add_argument(
-        "--skip-kasa", action="store_true", help="Skip Kasa device data collection"
-    )
     return parser.parse_args()
 
 
@@ -550,81 +544,56 @@ async def main() -> None:
         # Track all tasks
         all_tasks: List[BaseTask] = []
 
-        # Create and start BLE sensor tasks if not skipped
-        if not args.skip_ble:
-            # Create sensor instances
-            sensor_tuples = create_sensor_instances(sensors_config)
+        # Create and start BLE sensor tasks
+        # Create sensor instances
+        sensor_tuples = create_sensor_instances(sensors_config)
 
-            if not sensor_tuples:
-                logger.warning("No valid sensor instances created")
-            else:
-                # Create and start sensor tasks
-                for sensor_name, sensor_instance, sample_period in sensor_tuples:
-                    # Handle Tesla Wall Connector differently
-                    if isinstance(
-                        sensor_instance, tesla_wall_connector.TeslaWallConnector
-                    ):
-                        # Get the flow configs for each endpoint (vitals, lifetime, wifi)
-                        tesla_flow_configs = {
-                            f"{sensor_name}.vitals": sensor_to_flow_map.get(
-                                f"{sensor_name}.vitals"
-                            ),
-                            f"{sensor_name}.lifetime": sensor_to_flow_map.get(
-                                f"{sensor_name}.lifetime"
-                            ),
-                            f"{sensor_name}.wifi": sensor_to_flow_map.get(
-                                f"{sensor_name}.wifi"
-                            ),
-                        }
-
-                        # Check if we have all needed flow configs
-                        missing_configs = [
-                            k for k, v in tesla_flow_configs.items() if v is None
-                        ]
-                        if missing_configs:
-                            logger.error(
-                                f"Missing flow configs for Tesla Wall Connector {sensor_name}: {missing_configs}"
-                            )
-                            continue
-
-                        # Create Tesla Wall Connector task
-                        tesla_task: TeslaWallConnectorTask = TeslaWallConnectorTask(
-                            sensor_name=sensor_name,
-                            sensor_instance=sensor_instance,
-                            ingestion_service=ingestion_service,
-                            flow_configs=tesla_flow_configs,  # type: ignore
-                            sample_period=sample_period,
-                            logger=logger,
-                        )
-                        tesla_task.start()
-                        all_tasks.append(tesla_task)  # type: ignore
-                        logger.info(
-                            f"Started task for Tesla Wall Connector {sensor_name}"
-                        )
-                    else:
-                        # Regular handling for BLE sensors
-                        flow_config = sensor_to_flow_map.get(sensor_name)
-                        if flow_config is None:
-                            logger.error(f"No flow mapping for sensor {sensor_name}")
-                            continue
-
-                        sensor_task: SensorTask = SensorTask(
-                            sensor_name=sensor_name,
-                            sensor_instance=sensor_instance,  # type: ignore
-                            ingestion_service=ingestion_service,
-                            flow_config=flow_config,
-                            sample_period=sample_period,
-                            logger=logger,
-                            bt_mutex=BT_MUTEX,  # Pass the mutex
-                        )
-                        sensor_task.start()
-                        all_tasks.append(sensor_task)  # type: ignore
-                        logger.info(f"Started task for BLE sensor {sensor_name}")
+        if not sensor_tuples:
+            logger.warning("No valid sensor instances created")
         else:
-            logger.info("Skipping BLE sensor data collection")
+            # Create and start sensor tasks
+            for sensor_name, sensor_instance, sample_period in sensor_tuples:
+                # Handle Tesla Wall Connector differently
+                if isinstance(sensor_instance, tesla_wall_connector.TeslaWallConnector):
+                    # Get the flow configs for each endpoint (vitals, lifetime, wifi)
+                    tesla_flow_configs = {
+                        flow_name: flow_map for flow_name, flow_map in sensor_to_flow_map.items() 
+                        if flow_name.startswith(f"{sensor_name}.")
+                    }
+                    # Create Tesla Wall Connector task
+                    tesla_task: TeslaWallConnectorTask = TeslaWallConnectorTask(
+                        sensor_name=sensor_name,
+                        sensor_instance=sensor_instance,
+                        ingestion_service=ingestion_service,
+                        flow_configs=tesla_flow_configs,  # type: ignore
+                        sample_period=sample_period,
+                        logger=logger,
+                    )
+                    tesla_task.start()
+                    all_tasks.append(tesla_task)  # type: ignore
+                    logger.info(f"Started task for Tesla Wall Connector {sensor_name}")
+                else:
+                    # Regular handling for BLE sensors
+                    flow_config = sensor_to_flow_map.get(sensor_name)
+                    if flow_config is None:
+                        logger.error(f"No flow mapping for sensor {sensor_name}")
+                        continue
 
-        # Create and start Kasa sensor tasks if not skipped
-        if not args.skip_kasa and kasa_sensors:
+                    sensor_task: SensorTask = SensorTask(
+                        sensor_name=sensor_name,
+                        sensor_instance=sensor_instance,  # type: ignore
+                        ingestion_service=ingestion_service,
+                        flow_config=flow_config,
+                        sample_period=sample_period,
+                        logger=logger,
+                        bt_mutex=BT_MUTEX,  # Pass the mutex
+                    )
+                    sensor_task.start()
+                    all_tasks.append(sensor_task)  # type: ignore
+                    logger.info(f"Started task for BLE sensor {sensor_name}")
+
+        # Create and start Kasa sensor tasks
+        if kasa_sensors:
             for kasa_sensor in kasa_sensors:
                 flow_config = sensor_to_flow_map.get(kasa_sensor.name)
                 if flow_config is None:
@@ -641,10 +610,7 @@ async def main() -> None:
                 all_tasks.append(kasa_task)  # type: ignore
                 logger.info(f"Started task for Kasa device {kasa_sensor.name}")
         else:
-            if args.skip_kasa:
-                logger.info("Skipping Kasa device data collection")
-            elif not kasa_sensors:
-                logger.warning("No Kasa devices found")
+            logger.warning("No Kasa devices found")
 
         if not all_tasks:
             logger.error("No sensor tasks created, nothing to do")

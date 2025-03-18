@@ -70,6 +70,9 @@ class KasaSensor:
             return False
 
         try:
+            self.logger.info(
+                f"Connecting to device {self.name} at {self.address}"
+            )
             self.device_instance = await kasa.Discover.discover_single(
                 self.address,
                 credentials=self.credentials,
