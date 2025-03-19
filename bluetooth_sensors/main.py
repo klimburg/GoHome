@@ -21,6 +21,7 @@ from sift_py.ingestion.channel import (
     ChannelValue,
     double_value,
     int32_value,
+    int64_value,
     string_value,
 )
 from sift_py.ingestion.config.telemetry import TelemetryConfig
@@ -137,11 +138,14 @@ class SiftLogHandler(logging.Handler):
             self.handleError(record)
 
 
-async def create_main_process_flow(asset_name: str) -> FlowConfig:
+async def create_main_process_flow(
+    asset_name: str, sift_environments: List[Dict[str, Any]]
+) -> FlowConfig:
     """Create a flow config for the main process.
 
     Args:
         asset_name: The asset name
+        sift_environments: List of Sift environments configurations
 
     Returns:
         FlowConfig for the main process
@@ -165,12 +169,37 @@ async def create_main_process_flow(asset_name: str) -> FlowConfig:
         unit="seconds",
     )
 
+    # Create basic channels list with common channels
+    channels = [log_channel, task_count_channel, uptime_channel]
+
+    # Add channels for ingestion service statistics per environment
+    for env in sift_environments:
+        env_name = env["name"]
+
+        # Add success count channel for this environment
+        success_channel = ChannelConfig(
+            name=f"ingestion_service.{env_name}.success_count",
+            data_type=ChannelDataType.INT_64,
+            unit="count",
+        )
+
+        # Add error count channel for this environment
+        error_channel = ChannelConfig(
+            name=f"ingestion_service.{env_name}.error_count",
+            data_type=ChannelDataType.INT_64,
+            unit="count",
+        )
+
+        # Add these channels to our list
+        channels.append(success_channel)
+        channels.append(error_channel)
+
     # Create flow for main process
     flow_name = f"{asset_name}-main-process-{int(time.time())}"
 
     return FlowConfig(
         name=flow_name,
-        channels=[log_channel, task_count_channel, uptime_channel],
+        channels=channels,
     )
 
 
@@ -190,20 +219,49 @@ async def update_main_proc_telem(
     """
     active_count = sum(1 for task in tasks if task.task and not task.task.done())
 
+    # Create a list of channel values for the flow
+    channel_values = [
+        ChannelValue(
+            channel_name="active_tasks",
+            value=int32_value(active_count),
+        ),
+        ChannelValue(
+            channel_name="uptime",
+            value=double_value(time.time() - start_time),
+        ),
+    ]
+
+    # Add flow ingestion statistics if available
+    flow_ingestion_tasks = [
+        task for task in tasks if isinstance(task, FlowIngestionTask)
+    ]
+    for task in flow_ingestion_tasks:
+        # Get stats for each ingestion service
+        stats = task.get_stats()
+
+        # Add channel values for each environment's statistics
+        for env_name, counts in stats.items():
+            # Add success count
+            channel_values.append(
+                ChannelValue(
+                    channel_name=f"ingestion_service.{env_name}.success_count",
+                    value=int64_value(counts["success_count"]),
+                )
+            )
+
+            # Add error count
+            channel_values.append(
+                ChannelValue(
+                    channel_name=f"ingestion_service.{env_name}.error_count",
+                    value=int64_value(counts["error_count"]),
+                )
+            )
+
     # Create flow for main process telemetry
     flow = Flow(
         flow_name=flow_name,
         timestamp=datetime.now(timezone.utc),
-        channel_values=[
-            ChannelValue(
-                channel_name="active_tasks",
-                value=int32_value(active_count),
-            ),
-            ChannelValue(
-                channel_name="uptime",
-                value=double_value(time.time() - start_time),
-            ),
-        ],
+        channel_values=channel_values,
     )
 
     # Put flow on queue
@@ -371,23 +429,23 @@ async def build_telemetry_config(
 
 
 async def setup_sift_connection() -> Tuple[
-    List[IngestionService],
+    Dict[str, IngestionService],  # Dictionary of env_name to IngestionService
     List[SiftChannel],
     List[Dict[str, Any]],
     Dict[str, FlowConfig],
     List[KasaSensor],
-    str,  # Add main flow name as a return value
+    str,  # Main flow name
 ]:
     """Set up connections to Sift environments.
 
     Returns:
         Tuple of (
-            List[IngestionService],
+            Dict[str, IngestionService],  # Dictionary mapping env_name to IngestionService
             List[SiftChannel],
             sensors_config,
             sensor_to_flow_map,
             kasa_sensors,
-            main_flow_name
+            main_flow_name,
         )
     """
     # Load config file
@@ -436,7 +494,7 @@ async def setup_sift_connection() -> Tuple[
         )
 
     # Create main process flow config
-    main_flow_config = await create_main_process_flow(ASSET_NAME)
+    main_flow_config = await create_main_process_flow(ASSET_NAME, enabled_environments)
     main_flow_name = main_flow_config.name
 
     # Build telemetry config including both BLE, Kasa devices, and main process
@@ -446,22 +504,23 @@ async def setup_sift_connection() -> Tuple[
     logger.info(f"Built telemetry config with {len(telemetry_config.flows)} flows")
 
     # Create ingestion services for each enabled environment
-    ingestion_services = []
+    ingestion_services: Dict[str, IngestionService] = {}  # Changed to a dictionary
     grpc_channels = []
 
     for env in enabled_environments:
-        env_name = env["name"].upper()
-        api_key_var = f"SIFT_API_KEY_{env_name}"
+        env_name = env["name"]  # Use lowercase env_name as the key
+        env_name_upper = env_name.upper()  # For environment variable
+        api_key_var = f"SIFT_API_KEY_{env_name_upper}"
         api_key = os.getenv(api_key_var)
 
         if not api_key:
-            logger.warning(f"No API key found for environment {env['name']}, skipping")
+            logger.warning(f"No API key found for environment {env_name}, skipping")
             continue
 
         base_uri = env["base_uri"]
         use_ssl = env.get("use_ssl", True)
 
-        logger.info(f"Setting up Sift connection to {env['name']} at {base_uri}")
+        logger.info(f"Setting up Sift connection to {env_name} at {base_uri}")
 
         # Create credentials for this environment
         credentials = SiftChannelConfig(
@@ -479,14 +538,15 @@ async def setup_sift_connection() -> Tuple[
             ingestion_service = IngestionService(grpc_channel, telemetry_config)
 
             # Create a run
-            run_name = f"{ASSET_NAME}.{env['name']}.{datetime.now().timestamp():.0f}"
-            logger.info(f"Creating run for {env['name']}: {run_name}")
+            run_name = f"{ASSET_NAME}.{env_name}.{datetime.now().timestamp():.0f}"
+            logger.info(f"Creating run for {env_name}: {run_name}")
             ingestion_service.attach_run(grpc_channel, run_name)
 
-            ingestion_services.append(ingestion_service)
-            logger.info(f"Successfully set up Sift connection to {env['name']}")
+            # Store service with env_name as key
+            ingestion_services[env_name] = ingestion_service
+            logger.info(f"Successfully set up Sift connection to {env_name}")
         except Exception as e:
-            logger.exception(f"Error setting up Sift connection to {env['name']}: {e}")
+            logger.exception(f"Error setting up Sift connection to {env_name}: {e}")
 
     if not ingestion_services:
         raise ValueError("Failed to set up any Sift connections")
@@ -582,7 +642,7 @@ async def main() -> None:
     try:
         # Set up Sift connections
         (
-            ingestion_services,
+            ingestion_services,  # Now a dictionary of env_name -> IngestionService
             grpc_channels,
             sensors_config,
             sensor_to_flow_map,
@@ -590,7 +650,7 @@ async def main() -> None:
             main_flow_name,  # Get the main flow name
         ) = await setup_sift_connection()
 
-        logger.info(f"Set up {len(ingestion_services)} Sift connections")
+        logger.info(f"Set up {len(ingestion_services)} Sift environments for ingestion")
 
         # Add Sift log handler that uses flow queue
         sift_log_handler = SiftLogHandler(
@@ -610,7 +670,9 @@ async def main() -> None:
             logger=logger,
         )
         flow_ingestion_task.start()
-        logger.info("Started flow ingestion task")
+        logger.info(
+            f"Started flow ingestion task for environments: {', '.join(ingestion_services.keys())}"
+        )
 
         # Track all tasks
         all_tasks: List[BaseTask] = [flow_ingestion_task]  # Add the ingestion task
@@ -812,6 +874,10 @@ async def main() -> None:
             logger.info("Closing Sift connections")
             for channel in grpc_channels:
                 channel.close()
+
+            if "ingestion_services" in locals():
+                env_names = ", ".join(ingestion_services.keys())
+                logger.info(f"Closed connections to environments: {env_names}")
 
         logger.info("Shutting down")
 

@@ -85,5 +85,5 @@ sift_environments:
     use_ssl: true
   - name: local
     enabled: false
-    base_uri: "localhost:50051"
+    base_uri: "http://192.168.50.188:50051"
     use_ssl: false

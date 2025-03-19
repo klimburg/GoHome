@@ -6,7 +6,7 @@ Task classes for reading data from various sensors and uploading to Sift.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from sift_py.ingestion.channel import ChannelValue
 from sift_py.ingestion.config.telemetry import FlowConfig
@@ -518,20 +518,45 @@ class FlowIngestionTask(BaseTask):
     def __init__(
         self,
         flow_queue: asyncio.Queue[Flow],
-        ingestion_services: List[IngestionService],
+        ingestion_services: Dict[str, IngestionService],
         logger: Optional[logging.Logger] = None,
     ) -> None:
         """Initialize the flow ingestion task.
 
         Args:
             flow_queue: Queue to consume Flow objects from
-            ingestion_services: List of ingestion services to send flows to
+            ingestion_services: Dictionary mapping environment names to ingestion services
             logger: Optional logger instance
         """
         self.flow_queue = flow_queue
         self.ingestion_services = ingestion_services
         self.logger = logger or logging.getLogger(__name__)
         self.running = False
+
+        # Initialize counters for success and errors per service/environment
+        self.success_counts: Dict[str, int] = {
+            env_name: 0 for env_name in ingestion_services.keys()
+        }
+        self.error_counts: Dict[str, int] = {
+            env_name: 0 for env_name in ingestion_services.keys()
+        }
+
+    def get_stats(self) -> Dict[str, Dict[str, int]]:
+        """Get statistics about flow ingestion per service.
+
+        Returns:
+            Dictionary mapping environment names to dictionaries with success_count and error_count
+        """
+        stats = {}
+
+        # Since we now have environment names as keys, we can directly use them
+        for env_name in self.ingestion_services.keys():
+            stats[env_name] = {
+                "success_count": self.success_counts[env_name],
+                "error_count": self.error_counts[env_name],
+            }
+
+        return stats
 
     async def run(self) -> None:
         """Run the flow ingestion task."""
@@ -540,19 +565,29 @@ class FlowIngestionTask(BaseTask):
             f"Starting flow ingestion task with {len(self.ingestion_services)} services"
         )
 
+        errored_envs: Set[str] = set()
         while self.running:
             try:
                 # Get a flow from the queue
                 flow = await self.flow_queue.get()
-
                 # Process the flow by sending to all ingestion services
-                for service in self.ingestion_services:
+                for env_name, service in self.ingestion_services.items():
                     try:
                         service.try_ingest_flows(flow)
+                        # Increment success counter for this environment
+                        self.success_counts[env_name] += 1
+                        if env_name in errored_envs:
+                            errored_envs.remove(env_name)
                     except Exception as e:
-                        self.logger.exception(f"Error ingesting flow to service: {e}")
+                        # Increment error counter for this environment
+                        self.error_counts[env_name] += 1
+                        if env_name not in errored_envs:
+                            self.logger.error(
+                                f"Error ingesting flow to {env_name} service",
+                                exc_info=e,
+                            )
+                            errored_envs.add(env_name)
 
-                # Mark task as done
                 self.flow_queue.task_done()
 
             except asyncio.CancelledError:
