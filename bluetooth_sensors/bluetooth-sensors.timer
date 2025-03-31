@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart Bluetooth Sensors Daily
+Requires=bluetooth-sensors.service
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Unit=bluetooth-sensors.service
+
+[Install]
+WantedBy=timers.target 

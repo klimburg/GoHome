@@ -17,5 +17,7 @@ Environment=PYTHONUNBUFFERED=1
 # Optional: Adjust resource limits if needed
 # LimitNOFILE=4096
 
+RuntimeMaxSec=86400  # Optional: force restart after 24 hours if timer fails
+
 [Install]
 WantedBy=multi-user.target
