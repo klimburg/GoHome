@@ -255,13 +255,11 @@ class CommandDecode:
         self, logger: logging.Logger, raw_data: bytearray | None
     ) -> dict[str, float | str | None] | None:
         """Decoder returns dict with battery"""
-        logger.info(f"Raw data: {raw_data!r}")
-
         if values := self.validate_data(logger, raw_data):
             assert raw_data is not None
             data = {}
             data["battery"] = values[13] / 1000.0
-            logger.info(f"Data: {data!r}")
+            logger.debug(f"Data: {data!r}")
 
             return data
 
@@ -274,7 +272,6 @@ class CommandDecode:
         if raw_data is None:
             logger.debug("Validate data: No data received")
             return None
-        logger.info(f"Raw data: {raw_data!r}")
 
         cmd = raw_data[0:1]
         if cmd != self.cmd:
@@ -354,7 +351,7 @@ class WavePlus(BluetoothSensor):
             self.logger.error("Device not connected")
             return
 
-        self.logger.info("Sending command")
+        self.logger.debug("Sending command")
 
         await self.client.start_notify(
             COMMAND_UUID_WAVE_PLUS, self._notification_receiver
@@ -370,11 +367,10 @@ class WavePlus(BluetoothSensor):
         cmd_data = self.command_decoder.decode_data(
             logger=self.logger, raw_data=self._notification_receiver.message
         )
-        self.logger.info(f"Sensor data: {cmd_data}")
+        self.logger.debug(f"Sensor data: {cmd_data}")
         if cmd_data is None:
             self.logger.warning("Failed to decode command data")
         else:
-            self.logger.info(f"Sensor data: {cmd_data}")
             if (bat_data := cmd_data.get("battery")) is not None:
                 self.channel_data["battery_voltage"] = bat_data
                 self.channel_data["battery_pct"] = batt_voltage_to_pct(float(bat_data))
@@ -395,7 +391,7 @@ class WavePlus(BluetoothSensor):
             self._parse_sensor_data(rawdata)
             #await asyncio.sleep(1)
             await self._read_command_data()
-            self.logger.info(f"Channel data: {self.channel_data}")
+            self.logger.debug(f"Channel data: {self.channel_data}")
             return True
         except Exception as e:
             self.logger.error(f"Error reading values: {e}")
@@ -408,10 +404,7 @@ class WavePlus(BluetoothSensor):
             rawdata: Raw bytes read from the device
         """
         # Unpack the binary data
-        self.logger.info(f"Raw data: {rawdata!r}")
         unpacked_data = struct.unpack("<BBBBHHHHHHHH", rawdata)
-        self.logger.info(f"Len: {len(unpacked_data)}")
-        self.logger.info(f"Unpacked data: {unpacked_data}")
 
         self.read_time = time.time()
         self._sensor_version = unpacked_data[0]

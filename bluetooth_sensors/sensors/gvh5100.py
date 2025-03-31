@@ -157,7 +157,7 @@ class GVH5100(BluetoothSensor):
                     self.channel_data["humidity"] = humi
                     self.channel_data["battery"] = batt
                     self.channel_data["error"] = err
-                    self.logger.info(
+                    self.logger.debug(
                         f"{device.name} temp: {temp} C, humi: {humi} %rH, batt: {batt} %, err: {err}"
                     )
 

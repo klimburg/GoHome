@@ -96,6 +96,7 @@ class TeslaWallConnector:
     async def disconnect(self) -> None:
         """Disconnect from the Tesla Wall Connector."""
         if self.session:
+            self.logger.debug("Closing aiohttp session for Tesla Wall Connector")
             await self.session.close()
             self.session = None
         self.connected = False
