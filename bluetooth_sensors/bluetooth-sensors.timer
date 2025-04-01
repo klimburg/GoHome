@@ -1,10 +1,11 @@
 [Unit]
-Description=Restart Bluetooth Sensors Daily
-Requires=bluetooth-sensors.service
+Description=Timer to Restart Bluetooth Sensors Daily
+Requires=bluetooth-sensors-restart.service
 
 [Timer]
-OnCalendar=*-*-* 00:00:00
-Unit=bluetooth-sensors.service
+OnCalendar=*-*-* 06:09:00
+Unit=bluetooth-sensors-restart.service
+RemainAfterElapse=yes
 
 [Install]
 WantedBy=timers.target 
