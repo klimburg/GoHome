@@ -25,7 +25,7 @@ sensors:
     type: "Kasa"
     model: "KP125M"
     sample_period: 10
-    address: "192.168.50.240"
+    address: "192.168.50.239"
   - name: "PlayroomSwitch"
     type: "Kasa"
     model: "HS220"
