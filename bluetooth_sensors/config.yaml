@@ -70,6 +70,16 @@ sensors:
     type: "TeslaWallConnector"
     sample_period: 10
     address: "192.168.50.108"
+  - name: "KitchenRefrigeratorPlug"
+    type: "Kasa"
+    model: "KP125M"
+    sample_period: 10
+    address: "192.168.50.155"
+  - name: "GarageRefrigeratorPlug"
+    type: "Kasa"
+    model: "KP125M"
+    sample_period: 10
+    address: "192.168.50.207"
 sift_environments:
   - name: gov
     enabled: true
