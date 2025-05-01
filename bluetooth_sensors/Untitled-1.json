@@ -1,0 +1,1002 @@
+[
+    {
+        "disabled": false,
+        "endpoints": {
+            "1": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "10": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "11": {
+                "bindings": [],
+                "clusters": {
+                    "input": [
+                        "ssIasAce",
+                        "genTime"
+                    ],
+                    "output": [
+                        "ssIasZone",
+                        "ssIasWd"
+                    ]
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "110": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "12": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "13": {
+                "bindings": [],
+                "clusters": {
+                    "input": [
+                        "genOta"
+                    ],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "2": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "242": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "3": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "4": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "47": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "5": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "6": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            },
+            "8": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            }
+        },
+        "friendly_name": "Coordinator",
+        "ieee_address": "0x00124b0032d4397f",
+        "interview_completed": true,
+        "interviewing": false,
+        "network_address": 0,
+        "supported": true,
+        "type": "Coordinator"
+    },
+    {
+        "definition": {
+            "description": "Zigbee / BLE smart plug with power",
+            "exposes": [
+                {
+                    "features": [
+                        {
+                            "access": 7,
+                            "description": "On/off state of the switch",
+                            "label": "State",
+                            "name": "state",
+                            "property": "state",
+                            "type": "binary",
+                            "value_off": "OFF",
+                            "value_on": "ON",
+                            "value_toggle": "TOGGLE"
+                        }
+                    ],
+                    "type": "switch"
+                },
+                {
+                    "access": 7,
+                    "category": "config",
+                    "description": "Controls the behavior when the device is powered on after power loss",
+                    "label": "Power-on behavior",
+                    "name": "power_on_behavior",
+                    "property": "power_on_behavior",
+                    "type": "enum",
+                    "values": [
+                        "off",
+                        "previous",
+                        "on"
+                    ]
+                },
+                {
+                    "access": 1,
+                    "description": "Measured electrical AC frequency",
+                    "label": "AC frequency",
+                    "name": "ac_frequency",
+                    "property": "ac_frequency",
+                    "type": "numeric",
+                    "unit": "Hz"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured power",
+                    "label": "Power",
+                    "name": "power",
+                    "property": "power",
+                    "type": "numeric",
+                    "unit": "W"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured power factor",
+                    "label": "Power factor",
+                    "name": "power_factor",
+                    "property": "power_factor",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "description": "Sum of consumed energy",
+                    "label": "Energy",
+                    "name": "energy",
+                    "property": "energy",
+                    "type": "numeric",
+                    "unit": "kWh"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured electrical current",
+                    "label": "Current",
+                    "name": "current",
+                    "property": "current",
+                    "type": "numeric",
+                    "unit": "A"
+                },
+                {
+                    "access": 1,
+                    "description": "Measured electrical potential value",
+                    "label": "Voltage",
+                    "name": "voltage",
+                    "property": "voltage",
+                    "type": "numeric",
+                    "unit": "V"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Link quality (signal strength)",
+                    "label": "Linkquality",
+                    "name": "linkquality",
+                    "property": "linkquality",
+                    "type": "numeric",
+                    "unit": "lqi",
+                    "value_max": 255,
+                    "value_min": 0
+                }
+            ],
+            "model": "3RSP02028BZ",
+            "options": [
+                {
+                    "access": 2,
+                    "description": "Calibrates the ac_frequency value (absolute offset), takes into effect on next report of device.",
+                    "label": "Ac frequency calibration",
+                    "name": "ac_frequency_calibration",
+                    "property": "ac_frequency_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for ac_frequency, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Ac frequency precision",
+                    "name": "ac_frequency_precision",
+                    "property": "ac_frequency_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the power value (percentual offset), takes into effect on next report of device.",
+                    "label": "Power calibration",
+                    "name": "power_calibration",
+                    "property": "power_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for power, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Power precision",
+                    "name": "power_precision",
+                    "property": "power_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the energy value (percentual offset), takes into effect on next report of device.",
+                    "label": "Energy calibration",
+                    "name": "energy_calibration",
+                    "property": "energy_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for energy, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Energy precision",
+                    "name": "energy_precision",
+                    "property": "energy_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the current value (percentual offset), takes into effect on next report of device.",
+                    "label": "Current calibration",
+                    "name": "current_calibration",
+                    "property": "current_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for current, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Current precision",
+                    "name": "current_precision",
+                    "property": "current_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the voltage value (percentual offset), takes into effect on next report of device.",
+                    "label": "Voltage calibration",
+                    "name": "voltage_calibration",
+                    "property": "voltage_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for voltage, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Voltage precision",
+                    "name": "voltage_precision",
+                    "property": "voltage_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "State actions will also be published as 'action' when true (default false).",
+                    "label": "State action",
+                    "name": "state_action",
+                    "property": "state_action",
+                    "type": "binary",
+                    "value_off": false,
+                    "value_on": true
+                }
+            ],
+            "supports_ota": true,
+            "vendor": "Third Reality"
+        },
+        "description": "Microwave switch",
+        "disabled": false,
+        "endpoints": {
+            "1": {
+                "bindings": [
+                    {
+                        "cluster": "genOnOff",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    },
+                    {
+                        "cluster": "haElectricalMeasurement",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    },
+                    {
+                        "cluster": "seMetering",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    }
+                ],
+                "clusters": {
+                    "input": [
+                        "genBasic",
+                        "3rPlugGen2SpecialCluster",
+                        "genIdentify",
+                        "genGroups",
+                        "genScenes",
+                        "genOnOff",
+                        "haElectricalMeasurement",
+                        "seMetering"
+                    ],
+                    "output": [
+                        "genOta"
+                    ]
+                },
+                "configured_reportings": [
+                    {
+                        "attribute": "onOff",
+                        "cluster": "genOnOff",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 0,
+                        "reportable_change": 0
+                    },
+                    {
+                        "attribute": "activePower",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 10
+                    },
+                    {
+                        "attribute": "rmsCurrent",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 50
+                    },
+                    {
+                        "attribute": "rmsVoltage",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 5
+                    }
+                ],
+                "scenes": []
+            },
+            "242": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": [
+                        "greenPower"
+                    ]
+                },
+                "configured_reportings": [],
+                "scenes": []
+            }
+        },
+        "friendly_name": "MicrowavePower",
+        "ieee_address": "0x282c02bfffefe816",
+        "interview_completed": true,
+        "interviewing": false,
+        "manufacturer": "Third Reality, Inc",
+        "model_id": "3RSP02028BZ",
+        "network_address": 41581,
+        "power_source": "Mains (single phase)",
+        "software_build_id": "v1.00.88",
+        "supported": true,
+        "type": "Router"
+    },
+    {
+        "definition": {
+            "description": "Zigbee / BLE smart plug with power",
+            "exposes": [
+                {
+                    "features": [
+                        {
+                            "access": 7,
+                            "description": "On/off state of the switch",
+                            "label": "State",
+                            "name": "state",
+                            "property": "state",
+                            "type": "binary",
+                            "value_off": "OFF",
+                            "value_on": "ON",
+                            "value_toggle": "TOGGLE"
+                        }
+                    ],
+                    "type": "switch"
+                },
+                {
+                    "access": 7,
+                    "category": "config",
+                    "description": "Controls the behavior when the device is powered on after power loss",
+                    "label": "Power-on behavior",
+                    "name": "power_on_behavior",
+                    "property": "power_on_behavior",
+                    "type": "enum",
+                    "values": [
+                        "off",
+                        "previous",
+                        "on"
+                    ]
+                },
+                {
+                    "access": 1,
+                    "description": "Measured electrical AC frequency",
+                    "label": "AC frequency",
+                    "name": "ac_frequency",
+                    "property": "ac_frequency",
+                    "type": "numeric",
+                    "unit": "Hz"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured power",
+                    "label": "Power",
+                    "name": "power",
+                    "property": "power",
+                    "type": "numeric",
+                    "unit": "W"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured power factor",
+                    "label": "Power factor",
+                    "name": "power_factor",
+                    "property": "power_factor",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "description": "Sum of consumed energy",
+                    "label": "Energy",
+                    "name": "energy",
+                    "property": "energy",
+                    "type": "numeric",
+                    "unit": "kWh"
+                },
+                {
+                    "access": 1,
+                    "description": "Instantaneous measured electrical current",
+                    "label": "Current",
+                    "name": "current",
+                    "property": "current",
+                    "type": "numeric",
+                    "unit": "A"
+                },
+                {
+                    "access": 1,
+                    "description": "Measured electrical potential value",
+                    "label": "Voltage",
+                    "name": "voltage",
+                    "property": "voltage",
+                    "type": "numeric",
+                    "unit": "V"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Link quality (signal strength)",
+                    "label": "Linkquality",
+                    "name": "linkquality",
+                    "property": "linkquality",
+                    "type": "numeric",
+                    "unit": "lqi",
+                    "value_max": 255,
+                    "value_min": 0
+                }
+            ],
+            "model": "3RSP02028BZ",
+            "options": [
+                {
+                    "access": 2,
+                    "description": "Calibrates the ac_frequency value (absolute offset), takes into effect on next report of device.",
+                    "label": "Ac frequency calibration",
+                    "name": "ac_frequency_calibration",
+                    "property": "ac_frequency_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for ac_frequency, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Ac frequency precision",
+                    "name": "ac_frequency_precision",
+                    "property": "ac_frequency_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the power value (percentual offset), takes into effect on next report of device.",
+                    "label": "Power calibration",
+                    "name": "power_calibration",
+                    "property": "power_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for power, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Power precision",
+                    "name": "power_precision",
+                    "property": "power_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the energy value (percentual offset), takes into effect on next report of device.",
+                    "label": "Energy calibration",
+                    "name": "energy_calibration",
+                    "property": "energy_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for energy, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Energy precision",
+                    "name": "energy_precision",
+                    "property": "energy_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the current value (percentual offset), takes into effect on next report of device.",
+                    "label": "Current calibration",
+                    "name": "current_calibration",
+                    "property": "current_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for current, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Current precision",
+                    "name": "current_precision",
+                    "property": "current_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "Calibrates the voltage value (percentual offset), takes into effect on next report of device.",
+                    "label": "Voltage calibration",
+                    "name": "voltage_calibration",
+                    "property": "voltage_calibration",
+                    "type": "numeric"
+                },
+                {
+                    "access": 2,
+                    "description": "Number of digits after decimal point for voltage, takes into effect on next report of device. This option can only decrease the precision, not increase it.",
+                    "label": "Voltage precision",
+                    "name": "voltage_precision",
+                    "property": "voltage_precision",
+                    "type": "numeric",
+                    "value_max": 3,
+                    "value_min": 0
+                },
+                {
+                    "access": 2,
+                    "description": "State actions will also be published as 'action' when true (default false).",
+                    "label": "State action",
+                    "name": "state_action",
+                    "property": "state_action",
+                    "type": "binary",
+                    "value_off": false,
+                    "value_on": true
+                }
+            ],
+            "supports_ota": true,
+            "vendor": "Third Reality"
+        },
+        "description": "Desk and Monitor Power 1",
+        "disabled": false,
+        "endpoints": {
+            "1": {
+                "bindings": [
+                    {
+                        "cluster": "genOnOff",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    },
+                    {
+                        "cluster": "haElectricalMeasurement",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    },
+                    {
+                        "cluster": "seMetering",
+                        "target": {
+                            "endpoint": 1,
+                            "ieee_address": "0x00124b0032d4397f",
+                            "type": "endpoint"
+                        }
+                    }
+                ],
+                "clusters": {
+                    "input": [
+                        "genBasic",
+                        "3rPlugGen2SpecialCluster",
+                        "genIdentify",
+                        "genGroups",
+                        "genScenes",
+                        "genOnOff",
+                        "haElectricalMeasurement",
+                        "seMetering"
+                    ],
+                    "output": [
+                        "genOta"
+                    ]
+                },
+                "configured_reportings": [
+                    {
+                        "attribute": "onOff",
+                        "cluster": "genOnOff",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 0,
+                        "reportable_change": 0
+                    },
+                    {
+                        "attribute": "activePower",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 10
+                    },
+                    {
+                        "attribute": "rmsCurrent",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 50
+                    },
+                    {
+                        "attribute": "rmsVoltage",
+                        "cluster": "haElectricalMeasurement",
+                        "maximum_report_interval": 3600,
+                        "minimum_report_interval": 5,
+                        "reportable_change": 5
+                    }
+                ],
+                "scenes": []
+            },
+            "242": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": [
+                        "greenPower"
+                    ]
+                },
+                "configured_reportings": [],
+                "scenes": []
+            }
+        },
+        "friendly_name": "DeskPower1",
+        "ieee_address": "0x282c02bfffefdb09",
+        "interview_completed": true,
+        "interviewing": false,
+        "manufacturer": "Third Reality, Inc",
+        "model_id": "3RSP02028BZ",
+        "network_address": 57428,
+        "power_source": "Mains (single phase)",
+        "software_build_id": "v1.00.88",
+        "supported": true,
+        "type": "Router"
+    },
+    {
+        "date_code": "20161128",
+        "definition": {
+            "description": "Door and window sensor",
+            "exposes": [
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Remaining battery in %, can take up to 24 hours before reported",
+                    "label": "Battery",
+                    "name": "battery",
+                    "property": "battery",
+                    "type": "numeric",
+                    "unit": "%",
+                    "value_max": 100,
+                    "value_min": 0
+                },
+                {
+                    "access": 1,
+                    "description": "Indicates if the contact is closed (= true) or open (= false)",
+                    "label": "Contact",
+                    "name": "contact",
+                    "property": "contact",
+                    "type": "binary",
+                    "value_off": true,
+                    "value_on": false
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Temperature of the device",
+                    "label": "Device temperature",
+                    "name": "device_temperature",
+                    "property": "device_temperature",
+                    "type": "numeric",
+                    "unit": "°C"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Voltage of the battery in millivolts",
+                    "label": "Voltage",
+                    "name": "voltage",
+                    "property": "voltage",
+                    "type": "numeric",
+                    "unit": "mV"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Number of power outages",
+                    "label": "Power outage count",
+                    "name": "power_outage_count",
+                    "property": "power_outage_count",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Indicates how many times the sensor was triggered (since last scheduled report)",
+                    "label": "Trigger count",
+                    "name": "trigger_count",
+                    "property": "trigger_count",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Link quality (signal strength)",
+                    "label": "Linkquality",
+                    "name": "linkquality",
+                    "property": "linkquality",
+                    "type": "numeric",
+                    "unit": "lqi",
+                    "value_max": 255,
+                    "value_min": 0
+                }
+            ],
+            "model": "MCCGQ11LM",
+            "options": [
+                {
+                    "access": 2,
+                    "description": "Calibrates the device_temperature value (absolute offset), takes into effect on next report of device.",
+                    "label": "Device temperature calibration",
+                    "name": "device_temperature_calibration",
+                    "property": "device_temperature_calibration",
+                    "type": "numeric"
+                }
+            ],
+            "supports_ota": false,
+            "vendor": "Aqara"
+        },
+        "description": "Kitchen Fridge door sensor",
+        "disabled": false,
+        "endpoints": {
+            "1": {
+                "bindings": [],
+                "clusters": {
+                    "input": [
+                        "genBasic",
+                        "genIdentify",
+                        "65535",
+                        "genOnOff"
+                    ],
+                    "output": [
+                        "genBasic",
+                        "genGroups",
+                        "65535"
+                    ]
+                },
+                "configured_reportings": [],
+                "scenes": []
+            }
+        },
+        "friendly_name": "KitchenFridgeDoor",
+        "ieee_address": "0x00158d008b3d0fac",
+        "interview_completed": true,
+        "interviewing": false,
+        "manufacturer": "LUMI",
+        "model_id": "lumi.sensor_magnet.aq2",
+        "network_address": 48757,
+        "power_source": "Battery",
+        "software_build_id": "3000-0001",
+        "supported": true,
+        "type": "EndDevice"
+    },
+    {
+        "definition": {
+            "description": "Door and window sensor",
+            "exposes": [
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Remaining battery in %, can take up to 24 hours before reported",
+                    "label": "Battery",
+                    "name": "battery",
+                    "property": "battery",
+                    "type": "numeric",
+                    "unit": "%",
+                    "value_max": 100,
+                    "value_min": 0
+                },
+                {
+                    "access": 1,
+                    "description": "Indicates if the contact is closed (= true) or open (= false)",
+                    "label": "Contact",
+                    "name": "contact",
+                    "property": "contact",
+                    "type": "binary",
+                    "value_off": true,
+                    "value_on": false
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Temperature of the device",
+                    "label": "Device temperature",
+                    "name": "device_temperature",
+                    "property": "device_temperature",
+                    "type": "numeric",
+                    "unit": "°C"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Voltage of the battery in millivolts",
+                    "label": "Voltage",
+                    "name": "voltage",
+                    "property": "voltage",
+                    "type": "numeric",
+                    "unit": "mV"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Number of power outages",
+                    "label": "Power outage count",
+                    "name": "power_outage_count",
+                    "property": "power_outage_count",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Indicates how many times the sensor was triggered (since last scheduled report)",
+                    "label": "Trigger count",
+                    "name": "trigger_count",
+                    "property": "trigger_count",
+                    "type": "numeric"
+                },
+                {
+                    "access": 1,
+                    "category": "diagnostic",
+                    "description": "Link quality (signal strength)",
+                    "label": "Linkquality",
+                    "name": "linkquality",
+                    "property": "linkquality",
+                    "type": "numeric",
+                    "unit": "lqi",
+                    "value_max": 255,
+                    "value_min": 0
+                }
+            ],
+            "model": "MCCGQ11LM",
+            "options": [
+                {
+                    "access": 2,
+                    "description": "Calibrates the device_temperature value (absolute offset), takes into effect on next report of device.",
+                    "label": "Device temperature calibration",
+                    "name": "device_temperature_calibration",
+                    "property": "device_temperature_calibration",
+                    "type": "numeric"
+                }
+            ],
+            "supports_ota": false,
+            "vendor": "Aqara"
+        },
+        "disabled": false,
+        "endpoints": {
+            "1": {
+                "bindings": [],
+                "clusters": {
+                    "input": [],
+                    "output": []
+                },
+                "configured_reportings": [],
+                "scenes": []
+            }
+        },
+        "friendly_name": "GarageFridgeDoor",
+        "ieee_address": "0x00158d008b3b7671",
+        "interview_completed": true,
+        "interviewing": false,
+        "manufacturer": "LUMI",
+        "model_id": "lumi.sensor_magnet.aq2",
+        "network_address": 17965,
+        "power_source": "Battery",
+        "supported": true,
+        "type": "EndDevice"
+    }
+]

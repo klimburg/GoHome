@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, Union
 
 import kasa
 import yaml
@@ -42,7 +42,9 @@ from bluetooth_sensors.tasks import (
     KasaSensorTask,
     SensorTask,
     TeslaWallConnectorTask,
+    Zigbee2MQTTTask,
 )
+from bluetooth_sensors.zigbee2mqtt_client import Zigbee2MQTTClient
 
 # Setup logging
 logging.basicConfig(
@@ -66,6 +68,7 @@ SENSOR_TYPES = {
     "WavePlus": wave_plus.WavePlus,
     "GVH5100": gvh5100.GVH5100,
     "TeslaWallConnector": tesla_wall_connector.TeslaWallConnector,
+    "zigbee2mqtt": Zigbee2MQTTClient,
 }
 
 # Map of sensor types to their channel definitions
@@ -268,6 +271,15 @@ async def update_main_proc_telem(
     await flow_queue.put(flow)
 
 
+class ChannelDefinition(TypedDict):
+    name: str
+    unpacked_index: int
+    conversion: Callable[[Union[int, float]], Optional[Union[float, int, str]]]
+    unit: str
+    sift_type: ChannelDataType
+    is_sensor: bool
+
+
 async def build_telemetry_config(
     sensors_config: List[Dict[str, Any]],
     kasa_flow_configs: Optional[List[FlowConfig]] = None,
@@ -293,6 +305,10 @@ async def build_telemetry_config(
 
         # Skip Kasa devices (they are handled separately)
         if sensor_type == "Kasa":
+            continue
+
+        # Skip zigbee2mqtt devices (they are handled separately)
+        if sensor_type == "zigbee2mqtt":
             continue
 
         # Skip unknown sensor types
@@ -382,12 +398,14 @@ async def build_telemetry_config(
             if isinstance(channel_data, list):
                 # Standard format where CHANNELS is a list of channel dicts
                 for channel in channel_data:
-                    name = channel["name"]  # type: ignore
-                    unit = channel["unit"]  # type: ignore
+                    # Type the channel as a ChannelDefinition
+                    channel_def: ChannelDefinition = channel  # type: ignore
+                    name = channel_def["name"]
+                    unit = channel_def["unit"]
                     channels.append(
                         ChannelConfig(
                             name=f"{sensor_name}.{name}",
-                            data_type=channel["sift_type"],  # type: ignore
+                            data_type=channel_def["sift_type"],
                             unit=unit,
                         )
                     )
@@ -564,7 +582,13 @@ async def setup_sift_connection() -> Tuple[
 def create_sensor_instances(
     sensors_config: List[Dict[str, Any]],
 ) -> List[
-    Tuple[str, Union[BluetoothSensor, tesla_wall_connector.TeslaWallConnector], int]
+    Tuple[
+        str,
+        Union[
+            BluetoothSensor, tesla_wall_connector.TeslaWallConnector, Zigbee2MQTTClient
+        ],
+        int,
+    ]
 ]:
     """Create sensor instances from configuration.
 
@@ -594,6 +618,10 @@ def create_sensor_instances(
                     address=sensor_config.get("address", None),
                     logger=logger,
                 )
+            # Handle zigbee2mqtt differently - it needs the config path
+            elif sensor_type == "zigbee2mqtt":
+                config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+                sensor_instance = sensor_class(config_path=config_path)
             else:
                 # Regular handling for other sensor types
                 sensor_instance = sensor_class(
@@ -640,6 +668,11 @@ async def main() -> None:
         logger.debug("Debug logging enabled")
 
     try:
+        # Load config file
+        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+
         # Set up Sift connections
         (
             ingestion_services,  # Now a dictionary of env_name -> IngestionService
@@ -707,6 +740,21 @@ async def main() -> None:
                     tesla_task.start()
                     all_tasks.append(tesla_task)  # type: ignore
                     logger.info(f"Started task for Tesla Wall Connector {sensor_name}")
+                # Handle zigbee2mqtt differently
+                elif isinstance(sensor_instance, Zigbee2MQTTClient):
+                    # Get flow config for this sensor
+                    flow_config = sensor_instance.generate_flow_config()
+
+                    # Create and start zigbee2mqtt task
+                    zigbee_task = Zigbee2MQTTTask(
+                        zigbee_client=sensor_instance,
+                        flow_queue=FLOW_QUEUE,
+                        flow_config=flow_config,
+                        logger=logger,
+                    )
+                    zigbee_task.start()
+                    all_tasks.append(zigbee_task)
+                    logger.info(f"Started task for zigbee2mqtt sensor {sensor_name}")
                 else:
                     # Regular handling for BLE sensors
                     flow_config = sensor_to_flow_map.get(sensor_name)

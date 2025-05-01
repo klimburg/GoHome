@@ -92,6 +92,10 @@ sensors:
     model: "KP125M"
     sample_period: 10
     address: "192.168.50.207"
+  - name: "zigbee2mqtt"
+    type: "zigbee2mqtt"
+    sample_period: 10
+    address: "192.168.50.113:1883"
 sift_environments:
   - name: gov
     enabled: true

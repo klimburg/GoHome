@@ -16,6 +16,7 @@ from sift_py.ingestion.service import IngestionService
 from bluetooth_sensors.sensors import tesla_wall_connector
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
 from bluetooth_sensors.sensors.kasa import KasaSensor
+from bluetooth_sensors.zigbee2mqtt_client import Zigbee2MQTTClient
 
 
 class BaseTask:
@@ -607,3 +608,155 @@ class FlowIngestionTask(BaseTask):
         self.running = False
         if self.task and not self.task.done():
             self.task.cancel()
+
+
+class Zigbee2MQTTTask(BaseTask):
+    """Task for reading from zigbee2mqtt devices at a specified interval."""
+
+    def __init__(
+        self,
+        zigbee_client: Zigbee2MQTTClient,
+        flow_queue: asyncio.Queue[Flow],
+        flow_config: FlowConfig,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        """Initialize the zigbee2mqtt task.
+
+        Args:
+            zigbee_client: Zigbee2MQTTClient instance
+            flow_queue: Queue to put formatted flow data into
+            flow_config: Flow configuration for this sensor
+            logger: Optional logger instance
+        """
+        self.zigbee_client = zigbee_client
+        self.name = "zigbee2mqtt"
+        self.sample_period = zigbee_client.sample_period
+        self.flow_queue = flow_queue
+        self.flow_config = flow_config
+        self.logger = logger or logging.getLogger(__name__)
+        self.running = False
+
+    async def read_sensor_data(self) -> Dict[str, Any]:
+        """Read data from the zigbee2mqtt devices.
+
+        Returns:
+            Dictionary with channel names as keys and values as values
+        """
+        try:
+            # Get channel data from zigbee2mqtt
+            channel_data = self.zigbee_client.get_channel_data()
+            self.logger.debug(f"Channel data: {channel_data}")
+
+            # Extract just the values
+            data = {name: info["value"] for name, info in channel_data.items()}
+            return data
+
+        except Exception as e:
+            self.logger.exception(f"Error reading zigbee2mqtt data: {e}")
+            return {}
+
+    async def add_data_to_flow_queue(self, data: Dict[str, Dict[str, Any]]) -> None:
+        """Format zigbee2mqtt data as a Flow and add to the flow queue.
+
+        Args:
+            data: Dictionary with channel names as keys and values as values
+        """
+        if not data:
+            return
+
+        self.logger.debug(f"Got data from zigbee2mqtt: {data}")
+
+        # Process each update for each channel
+        for channel_name, channel_data in data.items():
+            # Skip if channel_data is not a dictionary
+            if not isinstance(channel_data, dict):
+                self.logger.warning(
+                    f"Unexpected data type for channel {channel_name}: {type(channel_data)}"
+                )
+                continue
+
+            updates = channel_data.get("updates", [])
+            if not updates:
+                continue
+
+            channel_config = next(
+                (
+                    config
+                    for config in self.flow_config.channels
+                    if config.name == channel_name
+                ),
+                None,
+            )
+            if not channel_config:
+                self.logger.warning(f"No channel config for {channel_name}")
+                continue
+
+            # Create a flow for each update
+            for timestamp, value in updates:
+                try:
+                    channel_value = ChannelValue(
+                        channel_name=channel_name,
+                        value=channel_config.try_value_from(value),
+                    )
+
+                    flow = Flow(
+                        flow_name=self.flow_config.name,
+                        timestamp=timestamp,
+                        channel_values=[channel_value],
+                    )
+
+                    await self.flow_queue.put(flow)
+                    self.logger.debug(
+                        f"Flow data queued for {channel_name} with value {value} at {timestamp}"
+                    )
+                except Exception as e:
+                    self.logger.exception(
+                        f"Error processing update for {channel_name}: {e}"
+                    )
+
+        # Clear the update history after processing
+        self.zigbee_client.clear_channel_updates()
+
+    async def run(self) -> None:
+        """Run the zigbee2mqtt reading task."""
+        self.running = True
+        self.logger.info(f"Starting zigbee2mqtt task with period {self.sample_period}s")
+
+        # Ensure connection to the MQTT broker
+        try:
+            self.zigbee_client.connect()
+        except Exception as e:
+            self.logger.error(f"Failed to connect to MQTT broker: {e}")
+            self.running = False
+            return
+
+        while self.running:
+            try:
+                # Read sensor data
+                data = await self.read_sensor_data()
+
+                # Format and queue data
+                await self.add_data_to_flow_queue(data)
+
+            except asyncio.CancelledError:
+                self.logger.info("Zigbee2MQTT task cancelled")
+                self.running = False
+                break
+            except Exception as e:
+                self.logger.exception(f"Error in zigbee2mqtt task: {e}")
+
+            # Wait for next reading
+            self.logger.debug(f"Waiting {self.sample_period}s for next reading")
+            await asyncio.sleep(self.sample_period)
+
+    def start(self) -> None:
+        """Start the zigbee2mqtt task."""
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.run())
+
+    def stop(self) -> None:
+        """Stop the zigbee2mqtt task."""
+        self.running = False
+        if self.task and not self.task.done():
+            self.task.cancel()
+        self.zigbee_client.disconnect()
