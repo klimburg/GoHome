@@ -8,6 +8,18 @@ sensors:
     serial_number: "GVH5100_4E95"
     type: "GVH5100"
     sample_period: 10
+  - name: "Kitchen"
+    serial_number: "GVH5100_2144"
+    type: "GVH5100"
+    sample_period: 10
+  - name: "Garage"
+    serial_number: "GVH5100_713F"
+    type: "GVH5100"
+    sample_period: 10
+  - name: "FamilyRoom"
+    serial_number: "GVH5100_323D"
+    type: "GVH5100"
+    sample_period: 10
   - name: "EmmaBedroom"
     serial_number: "GVH5100_2B6D"
     type: "GVH5100"
