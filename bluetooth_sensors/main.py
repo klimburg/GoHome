@@ -33,7 +33,7 @@ from bluetooth_sensors.sensors import gvh5100, tesla_wall_connector, wave_plus
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
 
 # Import Kasa sensor class
-from bluetooth_sensors.sensors.kasa import KasaSensor, setup_kasa_telemetry
+from bluetooth_sensors.sensors.kasa_sensors import KasaSensor, setup_kasa_telemetry
 
 # Import task classes
 from bluetooth_sensors.tasks import (

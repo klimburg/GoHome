@@ -170,3 +170,5 @@ class GVH5100(BluetoothSensor):
         except Exception as e:
             self.logger.error(f"Error reading values: {e}")
             return False
+
+

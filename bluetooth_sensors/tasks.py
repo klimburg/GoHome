@@ -15,7 +15,7 @@ from sift_py.ingestion.service import IngestionService
 
 from bluetooth_sensors.sensors import tesla_wall_connector
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
-from bluetooth_sensors.sensors.kasa import KasaSensor
+from bluetooth_sensors.sensors.kasa_sensors import KasaSensor
 
 
 class BaseTask:
