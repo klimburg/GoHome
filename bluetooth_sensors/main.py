@@ -33,7 +33,7 @@ from bluetooth_sensors.sensors import gvh5100, tesla_wall_connector, wave_plus
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
 
 # Import Kasa sensor class
-from bluetooth_sensors.sensors.kasa import KasaSensor, setup_kasa_telemetry
+from bluetooth_sensors.sensors.kasa_sensors import KasaSensor, setup_kasa_telemetry
 
 # Import task classes
 from bluetooth_sensors.tasks import (
@@ -190,9 +190,16 @@ async def create_main_process_flow(
             unit="count",
         )
 
+        # Add ping time channel for this environment
+        ping_time_channel = ChannelConfig(
+            name=f"ingestion_service.{env_name}.ping_time",
+            data_type=ChannelDataType.DOUBLE,
+            unit="seconds",
+        )
         # Add these channels to our list
         channels.append(success_channel)
         channels.append(error_channel)
+        channels.append(ping_time_channel)
 
     # Create flow for main process
     flow_name = f"{asset_name}-main-process-{int(time.time())}"
@@ -254,6 +261,14 @@ async def update_main_proc_telem(
                 ChannelValue(
                     channel_name=f"ingestion_service.{env_name}.error_count",
                     value=int64_value(counts["error_count"]),
+                )
+            )
+
+            # Add ping time
+            channel_values.append(
+                ChannelValue(
+                    channel_name=f"ingestion_service.{env_name}.ping_time",
+                    value=double_value(counts["ping_time"]),
                 )
             )
 

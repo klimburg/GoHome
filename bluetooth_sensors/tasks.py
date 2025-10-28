@@ -5,6 +5,7 @@ Task classes for reading data from various sensors and uploading to Sift.
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
@@ -15,7 +16,8 @@ from sift_py.ingestion.service import IngestionService
 
 from bluetooth_sensors.sensors import tesla_wall_connector
 from bluetooth_sensors.sensors._ble_sensor import BluetoothSensor
-from bluetooth_sensors.sensors.kasa import KasaSensor
+from bluetooth_sensors.sensors.kasa_sensors import KasaSensor
+from sift.ping.v1 import ping_pb2, ping_pb2_grpc  # type: ignore
 
 
 class BaseTask:
@@ -540,12 +542,16 @@ class FlowIngestionTask(BaseTask):
         self.error_counts: Dict[str, int] = {
             env_name: 0 for env_name in ingestion_services.keys()
         }
+        # Initialize ping times per service/environment
+        self.ping_times: Dict[str, float] = {
+            env_name: 0.0 for env_name in ingestion_services.keys()
+        }
 
-    def get_stats(self) -> Dict[str, Dict[str, int]]:
+    def get_stats(self) -> Dict[str, Dict[str, Any]]:
         """Get statistics about flow ingestion per service.
 
         Returns:
-            Dictionary mapping environment names to dictionaries with success_count and error_count
+            Dictionary mapping environment names to dictionaries with success_count, error_count, and ping_time
         """
         stats = {}
 
@@ -554,9 +560,44 @@ class FlowIngestionTask(BaseTask):
             stats[env_name] = {
                 "success_count": self.success_counts[env_name],
                 "error_count": self.error_counts[env_name],
+                "ping_time": self.ping_times[env_name],
             }
 
         return stats
+
+    async def ping_environment(self, env_name: str, service: IngestionService) -> None:
+        """Ping an environment and measure response time.
+
+        Args:
+            env_name: Name of the environment
+            service: IngestionService instance for the environment
+        """
+        try:
+            # Use the SiftChannel directly, not the underlying gRPC channel
+            # The SiftChannel handles authentication properly
+            channel = service.transport_channel
+
+            # Create ping service stub using the SiftChannel
+            ping_stub = ping_pb2_grpc.PingServiceStub(channel)
+
+            # Create ping request
+            request = ping_pb2.PingRequest()
+
+            # Measure ping time - note: Ping is synchronous, not async
+            start_time = time.time()
+            ping_stub.Ping(request)
+            end_time = time.time()
+
+            # Calculate ping time in seconds
+            ping_time = end_time - start_time
+            self.ping_times[env_name] = ping_time
+
+            self.logger.debug(f"Ping to {env_name}: {ping_time:.3f}s")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to ping {env_name}: {e}")
+            # Set ping time to -1 to indicate failure
+            self.ping_times[env_name] = -1.0
 
     async def run(self) -> None:
         """Run the flow ingestion task."""
@@ -566,8 +607,19 @@ class FlowIngestionTask(BaseTask):
         )
 
         errored_envs: Set[str] = set()
+        last_ping_time = 0.0
+        ping_interval = 60.0  # Ping every 60 seconds
+
         while self.running:
             try:
+                # Periodically ping all environments
+                current_time = time.time()
+                if current_time - last_ping_time >= ping_interval:
+                    self.logger.debug("Performing periodic ping of all environments")
+                    for env_name, service in self.ingestion_services.items():
+                        await self.ping_environment(env_name, service)
+                    last_ping_time = current_time
+
                 # Get a flow from the queue
                 flow = await self.flow_queue.get()
                 # Process the flow by sending to all ingestion services

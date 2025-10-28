@@ -23,6 +23,7 @@ CHANNELS: List[ChannelDict] = [
         "conversion": cast(ConversionFunc, lambda x: x),
         "unit": "degC",
         "sift_type": ChannelDataType.DOUBLE,
+        "is_sensor": None,
     },
     {
         "name": "humidity",
@@ -30,6 +31,7 @@ CHANNELS: List[ChannelDict] = [
         "conversion": cast(ConversionFunc, lambda x: x),
         "unit": "%rH",
         "sift_type": ChannelDataType.DOUBLE,
+        "is_sensor": None,
     },
     {
         "name": "battery",
@@ -37,6 +39,7 @@ CHANNELS: List[ChannelDict] = [
         "conversion": cast(ConversionFunc, lambda x: x),
         "unit": "%",
         "sift_type": ChannelDataType.DOUBLE,
+        "is_sensor": None,
     },
     {
         "name": "error",
@@ -44,6 +47,7 @@ CHANNELS: List[ChannelDict] = [
         "conversion": cast(ConversionFunc, lambda x: x),
         "unit": "",
         "sift_type": ChannelDataType.BOOL,
+        "is_sensor": None,
     },
 ]
 
@@ -149,6 +153,9 @@ class GVH5100(BluetoothSensor):
         def _detection_callback(
             device: BLEDevice, advertisement_data: AdvertisementData
         ) -> None:
+            self.logger.debug(
+                f"Device: {device.name}, Address: {device.address}, advertisement_data: {advertisement_data}"
+            )
             if device.name and device.name == self.serial_number:
                 if 1 in advertisement_data.manufacturer_data.keys():
                     data = advertisement_data.manufacturer_data[1]
@@ -170,3 +177,14 @@ class GVH5100(BluetoothSensor):
         except Exception as e:
             self.logger.error(f"Error reading values: {e}")
             return False
+
+
+if __name__ == "__main__":
+
+    async def main() -> None:
+        print("Starting discovery")
+        devices = await BleakScanner.discover()
+        for device in devices:
+            print(device.name, device.address, device.metadata)
+
+    asyncio.run(main())
